@@ -123,7 +123,7 @@ function Header({ onHome }) {
 }
 
 // ─── Home Screen ───
-function HomeScreen({ yearCounts, onSelectYear }) {
+function HomeScreen({ yearCounts, onSelectYear, savedResults, onViewResult }) {
   const years = Object.keys(YEAR_FILES).sort((a, b) => b - a)
 
   return (
@@ -151,6 +151,17 @@ function HomeScreen({ yearCounts, onSelectYear }) {
               <span>{yearCounts[year] || '...'} Questions</span>
             </div>
             <div className="year-card-badge">Previous Year Questions</div>
+            {savedResults && savedResults[year] && (
+              <button
+                className="year-card-result-btn"
+                onClick={(e) => { e.stopPropagation(); onViewResult(Number(year)) }}
+              >
+                📊 View Last Result
+                <span className="result-date">
+                  {new Date(savedResults[year].timestamp).toLocaleDateString()}
+                </span>
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -204,12 +215,14 @@ function PreTestModal({ year, questionCount, onStart, onClose }) {
   )
 }
 
-// ─── Timer Hook ───
+// ─── Timer Hook (with pause/resume) ───
 function useTimer(initialSeconds, onExpire) {
   const [seconds, setSeconds] = useState(initialSeconds)
+  const [isPaused, setIsPaused] = useState(false)
   const intervalRef = useRef(null)
 
-  useEffect(() => {
+  const startInterval = useCallback(() => {
+    clearInterval(intervalRef.current)
     intervalRef.current = setInterval(() => {
       setSeconds(prev => {
         if (prev <= 1) {
@@ -220,8 +233,20 @@ function useTimer(initialSeconds, onExpire) {
         return prev - 1
       })
     }, 1000)
-    return () => clearInterval(intervalRef.current)
   }, [onExpire])
+
+  useEffect(() => {
+    if (!isPaused) {
+      startInterval()
+    } else {
+      clearInterval(intervalRef.current)
+    }
+    return () => clearInterval(intervalRef.current)
+  }, [isPaused, startInterval])
+
+  const togglePause = useCallback(() => {
+    setIsPaused(prev => !prev)
+  }, [])
 
   const formatTime = useCallback(() => {
     const h = Math.floor(seconds / 3600)
@@ -230,7 +255,7 @@ function useTimer(initialSeconds, onExpire) {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
   }, [seconds])
 
-  return { seconds, formatTime }
+  return { seconds, formatTime, isPaused, togglePause }
 }
 
 // ─── Exam Screen ───
@@ -246,7 +271,7 @@ function ExamScreen({ year, questions, onSubmit }) {
     onSubmit(responses)
   }, [responses, onSubmit])
 
-  const { seconds, formatTime } = useTimer(EXAM_DURATION, handleExpire)
+  const { seconds, formatTime, isPaused, togglePause } = useTimer(EXAM_DURATION, handleExpire)
 
   // Save progress to localStorage
   useEffect(() => {
@@ -332,6 +357,19 @@ function ExamScreen({ year, questions, onSubmit }) {
 
   return (
     <div className="exam-screen fade-in">
+      {/* Pause overlay */}
+      {isPaused && (
+        <div className="pause-overlay" onClick={togglePause}>
+          <div className="pause-overlay-content">
+            <div className="pause-icon">⏸</div>
+            <h2>Exam Paused</h2>
+            <p>Click anywhere or press the Resume button to continue</p>
+            <button className="btn btn-primary" style={{ marginTop: '24px' }} onClick={togglePause}>
+              ▶ Resume Exam
+            </button>
+          </div>
+        </div>
+      )}
       {/* Main question area */}
       <div className="exam-main">
         <div className="question-header">
@@ -382,13 +420,22 @@ function ExamScreen({ year, questions, onSubmit }) {
         <div className="timer-bar">
           <div>
             <div className="timer-label">Time Remaining</div>
-            <div className={`timer-display ${seconds < 300 ? 'urgent' : ''}`}>
+            <div className={`timer-display ${seconds < 300 ? 'urgent' : ''} ${isPaused ? 'paused' : ''}`}>
               {formatTime()}
             </div>
           </div>
-          <div style={{ textAlign: 'right', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            <div>{attempted}/{questions.length} answered</div>
-            <div>{markedCount} marked</div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+            <button
+              className={`btn-pause ${isPaused ? 'is-paused' : ''}`}
+              onClick={togglePause}
+              title={isPaused ? 'Resume Timer' : 'Pause Timer'}
+            >
+              {isPaused ? '▶ Resume' : '⏸ Pause'}
+            </button>
+            <div style={{ textAlign: 'right', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              <div>{attempted}/{questions.length} answered</div>
+              <div>{markedCount} marked</div>
+            </div>
           </div>
         </div>
 
@@ -628,10 +675,35 @@ function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
             ))}
           </div>
 
+          {/* Question palette for quick navigation */}
+          {reviewQuestions.length > 0 && (
+            <div className="review-palette">
+              <div className="review-palette-title">Jump to Question</div>
+              <div className="review-palette-grid">
+                {reviewQuestions.map((rq, rIdx) => (
+                  <button
+                    key={rq.idx}
+                    className={`review-palette-btn ${rq.status} ${rIdx === Math.min(reviewIdx, reviewQuestions.length - 1) ? 'current' : ''}`}
+                    onClick={() => setReviewIdx(rIdx)}
+                    title={`Q${rq.idx + 1} — ${rq.status}`}
+                  >
+                    {rq.idx + 1}
+                  </button>
+                ))}
+              </div>
+              <div className="review-palette-legend">
+                <div className="legend-item"><span className="legend-dot answered"></span>Correct</div>
+                <div className="legend-item"><span className="legend-dot not-answered"></span>Incorrect</div>
+                <div className="legend-item"><span className="legend-dot unattempted-dot"></span>Unattempted</div>
+              </div>
+            </div>
+          )}
+
           {/* Single question view — paginated */}
           {reviewQuestions.length > 0 && (() => {
             const q = reviewQuestions[Math.min(reviewIdx, reviewQuestions.length - 1)]
             const safeIdx = Math.min(reviewIdx, reviewQuestions.length - 1)
+            const googleQuery = encodeURIComponent(q.question.substring(0, 200))
             return (
               <div>
                 {/* Navigation header */}
@@ -663,6 +735,15 @@ function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
                     <span className="question-number">Q{q.idx + 1}</span>
                     <span className="question-section-badge">{q.section}</span>
                     <span className={`question-difficulty diff-${q.difficulty.toLowerCase()}`}>{q.difficulty}</span>
+                    <a
+                      className="google-search-link"
+                      href={`https://www.google.com/search?q=${googleQuery}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Search this question on Google"
+                    >
+                      🔍 Google
+                    </a>
                   </div>
 
                   <div className="question-text" style={{ marginBottom: '16px' }}>{q.question}</div>
@@ -773,6 +854,23 @@ function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
   )
 }
 
+// ─── Helper: get all saved test results from localStorage ───
+function getSavedResults() {
+  const results = {}
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (key && key.startsWith('upsc_result_')) {
+      try {
+        const data = JSON.parse(localStorage.getItem(key))
+        if (data && data.year) {
+          results[data.year] = data
+        }
+      } catch { /* ignore */ }
+    }
+  }
+  return results
+}
+
 // ─── Main App ───
 function App() {
   const [screen, setScreen] = useState('home') // home, modal, exam, scorecard
@@ -781,11 +879,13 @@ function App() {
   const [questions, setQuestions] = useState([])
   const [responses, setResponses] = useState({})
   const [loading, setLoading] = useState(true)
+  const [savedResults, setSavedResults] = useState({})
 
-  // Load year counts on mount
+  // Load year counts and saved results on mount
   useEffect(() => {
     fetchAllYearCounts().then(counts => {
       setYearCounts(counts)
+      setSavedResults(getSavedResults())
       setLoading(false)
     })
   }, [])
@@ -807,6 +907,14 @@ function App() {
 
   const handleSubmitExam = (examResponses) => {
     setResponses(examResponses)
+    // Save completed test result to localStorage
+    const resultData = {
+      year: selectedYear,
+      responses: examResponses,
+      timestamp: new Date().toISOString(),
+    }
+    localStorage.setItem(`upsc_result_${selectedYear}`, JSON.stringify(resultData))
+    setSavedResults(prev => ({ ...prev, [selectedYear]: resultData }))
     setScreen('scorecard')
   }
 
@@ -820,7 +928,21 @@ function App() {
     setSelectedYear(null)
     setQuestions([])
     setResponses({})
+    setSavedResults(getSavedResults())
     setScreen('home')
+  }
+
+  // Load a saved result from localStorage
+  const handleViewSavedResult = async (year) => {
+    const saved = savedResults[year]
+    if (!saved) return
+    setLoading(true)
+    setSelectedYear(year)
+    const yearQuestions = await fetchYearQuestions(year)
+    setQuestions(yearQuestions)
+    setResponses(saved.responses)
+    setLoading(false)
+    setScreen('scorecard')
   }
 
   if (loading) {
@@ -840,12 +962,12 @@ function App() {
       <Header onHome={handleGoHome} />
 
       {screen === 'home' && (
-        <HomeScreen yearCounts={yearCounts} onSelectYear={handleSelectYear} />
+        <HomeScreen yearCounts={yearCounts} onSelectYear={handleSelectYear} savedResults={savedResults} onViewResult={handleViewSavedResult} />
       )}
 
       {screen === 'modal' && (
         <>
-          <HomeScreen yearCounts={yearCounts} onSelectYear={handleSelectYear} />
+          <HomeScreen yearCounts={yearCounts} onSelectYear={handleSelectYear} savedResults={savedResults} onViewResult={handleViewSavedResult} />
           <PreTestModal
             year={selectedYear}
             questionCount={yearCounts[selectedYear] || 0}
