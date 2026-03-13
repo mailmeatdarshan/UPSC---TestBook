@@ -274,12 +274,34 @@ function useTimer(initialSeconds, onExpire, storageKey) {
   return { seconds, formatTime, isPaused, togglePause }
 }
 
+// ─── Helper: read saved exam progress from localStorage ───
+function loadExamProgress(year) {
+  try {
+    const saved = localStorage.getItem(`upsc_exam_${year}`)
+    if (saved) return JSON.parse(saved)
+  } catch { /* ignore */ }
+  return null
+}
+
 // ─── Exam Screen ───
 function ExamScreen({ year, questions, onSubmit }) {
-  const [currentIdx, setCurrentIdx] = useState(0)
-  const [responses, setResponses] = useState({}) // { questionIndex: 'A' }
-  const [marked, setMarked] = useState(new Set())
-  const [visited, setVisited] = useState(new Set([0]))
+  // Lazy-init all state from localStorage so refresh restores everything instantly
+  const [currentIdx, setCurrentIdx] = useState(() => {
+    const saved = loadExamProgress(year)
+    return saved?.currentIdx ?? 0
+  })
+  const [responses, setResponses] = useState(() => {
+    const saved = loadExamProgress(year)
+    return saved?.responses ?? {}
+  })
+  const [marked, setMarked] = useState(() => {
+    const saved = loadExamProgress(year)
+    return new Set(saved?.marked ?? [])
+  })
+  const [visited, setVisited] = useState(() => {
+    const saved = loadExamProgress(year)
+    return new Set(saved?.visited ?? [0])
+  })
   const [sectionFilter, setSectionFilter] = useState('All')
   const [showConfirm, setShowConfirm] = useState(false)
 
@@ -289,26 +311,11 @@ function ExamScreen({ year, questions, onSubmit }) {
 
   const { seconds, formatTime, isPaused, togglePause } = useTimer(EXAM_DURATION, handleExpire, `upsc_timer_${year}`)
 
-  // Save progress to localStorage
+  // Save progress to localStorage on every change
   useEffect(() => {
     const key = `upsc_exam_${year}`
     localStorage.setItem(key, JSON.stringify({ responses, marked: [...marked], visited: [...visited], currentIdx }))
   }, [responses, marked, visited, currentIdx, year])
-
-  // Load progress from localStorage
-  useEffect(() => {
-    const key = `upsc_exam_${year}`
-    const saved = localStorage.getItem(key)
-    if (saved) {
-      try {
-        const data = JSON.parse(saved)
-        if (data.responses) setResponses(data.responses)
-        if (data.marked) setMarked(new Set(data.marked))
-        if (data.visited) setVisited(new Set(data.visited))
-        if (data.currentIdx !== undefined) setCurrentIdx(data.currentIdx)
-      } catch { /* ignore */ }
-    }
-  }, [year])
 
   const currentQ = questions[currentIdx]
   const sections = ['All', ...new Set(questions.map(q => q.section))]
@@ -832,7 +839,7 @@ function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
                   )}
 
                   {/* Custom notes per question — permanent */}
-                  <QuestionNotes year={year} questionId={q.id} />
+                  <QuestionNotes key={`${year}_${q.id}`} year={year} questionId={q.id} />
                 </div>
 
                 {/* Bottom navigation */}
