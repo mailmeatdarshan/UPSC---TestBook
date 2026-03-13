@@ -215,11 +215,27 @@ function PreTestModal({ year, questionCount, onStart, onClose }) {
   )
 }
 
-// ─── Timer Hook (with pause/resume) ───
-function useTimer(initialSeconds, onExpire) {
-  const [seconds, setSeconds] = useState(initialSeconds)
+// ─── Timer Hook (with pause/resume + localStorage persistence) ───
+function useTimer(initialSeconds, onExpire, storageKey) {
+  const [seconds, setSeconds] = useState(() => {
+    if (storageKey) {
+      const saved = localStorage.getItem(storageKey)
+      if (saved !== null) {
+        const parsed = parseInt(saved, 10)
+        if (!isNaN(parsed) && parsed > 0) return parsed
+      }
+    }
+    return initialSeconds
+  })
   const [isPaused, setIsPaused] = useState(false)
   const intervalRef = useRef(null)
+
+  // Persist seconds to localStorage on every tick
+  useEffect(() => {
+    if (storageKey) {
+      localStorage.setItem(storageKey, seconds.toString())
+    }
+  }, [seconds, storageKey])
 
   const startInterval = useCallback(() => {
     clearInterval(intervalRef.current)
@@ -271,7 +287,7 @@ function ExamScreen({ year, questions, onSubmit }) {
     onSubmit(responses)
   }, [responses, onSubmit])
 
-  const { seconds, formatTime, isPaused, togglePause } = useTimer(EXAM_DURATION, handleExpire)
+  const { seconds, formatTime, isPaused, togglePause } = useTimer(EXAM_DURATION, handleExpire, `upsc_timer_${year}`)
 
   // Save progress to localStorage
   useEffect(() => {
@@ -337,6 +353,8 @@ function ExamScreen({ year, questions, onSubmit }) {
 
   const handleSubmit = () => {
     localStorage.removeItem(`upsc_exam_${year}`)
+    localStorage.removeItem(`upsc_timer_${year}`)
+    localStorage.removeItem('upsc_active_session')
     onSubmit(responses)
   }
 
@@ -501,6 +519,37 @@ function ExamScreen({ year, questions, onSubmit }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Custom Notes Component ───
+function QuestionNotes({ year, questionId }) {
+  const storageKey = `upsc_notes_${year}_${questionId}`
+  const [note, setNote] = useState(() => localStorage.getItem(storageKey) || '')
+  const [saved, setSaved] = useState(false)
+
+  const handleChange = (e) => {
+    const val = e.target.value
+    setNote(val)
+    localStorage.setItem(storageKey, val)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+
+  return (
+    <div className="my-notes-container">
+      <div className="my-notes-header">
+        <strong>📝 My Notes</strong>
+        {saved && <span className="notes-saved-indicator">✓ Saved</span>}
+      </div>
+      <textarea
+        className="my-notes-textarea"
+        value={note}
+        onChange={handleChange}
+        placeholder="Write your own explanation or notes here… These are saved permanently."
+        rows={4}
+      />
     </div>
   )
 }
@@ -781,6 +830,9 @@ function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
                       <p style={{ marginTop: '10px' }}>{q.motivation}</p>
                     </div>
                   )}
+
+                  {/* Custom notes per question — permanent */}
+                  <QuestionNotes year={year} questionId={q.id} />
                 </div>
 
                 {/* Bottom navigation */}
@@ -881,11 +933,29 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [savedResults, setSavedResults] = useState({})
 
-  // Load year counts and saved results on mount
+  // Load year counts, saved results, and check for active session on mount
   useEffect(() => {
-    fetchAllYearCounts().then(counts => {
+    fetchAllYearCounts().then(async (counts) => {
       setYearCounts(counts)
       setSavedResults(getSavedResults())
+
+      // Check for an active exam session (page was refreshed mid-test)
+      const activeSession = localStorage.getItem('upsc_active_session')
+      if (activeSession) {
+        try {
+          const session = JSON.parse(activeSession)
+          if (session.year && session.screen === 'exam') {
+            // Restore exam state
+            const yearQuestions = await fetchYearQuestions(session.year)
+            setSelectedYear(session.year)
+            setQuestions(yearQuestions)
+            setScreen('exam')
+            setLoading(false)
+            return
+          }
+        } catch { /* ignore invalid session */ }
+      }
+
       setLoading(false)
     })
   }, [])
@@ -902,6 +972,8 @@ function App() {
     setQuestions(yearQuestions)
     setResponses({})
     setLoading(false)
+    // Save active session so refresh can resume
+    localStorage.setItem('upsc_active_session', JSON.stringify({ screen: 'exam', year: selectedYear }))
     setScreen('exam')
   }
 
@@ -920,11 +992,15 @@ function App() {
 
   const handleRetake = () => {
     localStorage.removeItem(`upsc_exam_${selectedYear}`)
+    localStorage.removeItem(`upsc_timer_${selectedYear}`)
     setResponses({})
+    // Save active session so refresh can resume the retake too
+    localStorage.setItem('upsc_active_session', JSON.stringify({ screen: 'exam', year: selectedYear }))
     setScreen('exam')
   }
 
   const handleGoHome = () => {
+    localStorage.removeItem('upsc_active_session')
     setSelectedYear(null)
     setQuestions([])
     setResponses({})

@@ -1421,3 +1421,67 @@ body {
   color: var(--text-muted);
   font-weight: 400;
 }
+
+/* =============== MY NOTES (Custom Explanation) =============== */
+.my-notes-container {
+  margin-top: var(--space-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-left: 3px solid #8B5CF6;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: var(--space-lg);
+}
+
+.my-notes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+.my-notes-header strong {
+  color: #8B5CF6;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.notes-saved-indicator {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--success);
+  animation: notesSavedFlash 1.5s ease forwards;
+}
+
+@keyframes notesSavedFlash {
+  0%   { opacity: 0; transform: translateY(-4px); }
+  15%  { opacity: 1; transform: translateY(0); }
+  85%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.my-notes-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: var(--space-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  line-height: 1.7;
+  resize: vertical;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  outline: none;
+}
+
+.my-notes-textarea::placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.my-notes-textarea:focus {
+  border-color: #8B5CF6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
+}
