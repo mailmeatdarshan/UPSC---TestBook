@@ -572,6 +572,14 @@ body {
   padding: var(--space-lg);
   border-top: 1px solid var(--border);
   background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-submit .btn {
+  width: 100%;
+  justify-content: center;
 }
 
 /* Question area */
@@ -1228,16 +1236,18 @@ body {
 
   .sidebar-submit {
     padding: 8px 16px;
-    display: flex;
-    flex-direction: row !important;
+    flex-direction: row;
     gap: 8px;
     border-top: 1px solid var(--border-light);
+    align-items: stretch;
   }
 
   .sidebar-submit .btn {
     flex: 1;
-    padding: 8px;
+    width: auto;
+    padding: 10px 8px;
     font-size: 0.75rem;
+    height: 40px; /* Force consistent height */
   }
 
   .exam-main {

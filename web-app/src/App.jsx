@@ -129,9 +129,9 @@ function HomeScreen({ yearCounts, onSelectYear, savedResults, onViewResult, onDe
           <div key={year} className="year-card slide-up" onClick={() => onSelectYear(Number(year))}>
             <div className="year-card-year">{year}</div>
             <div className="year-card-info"><BarChart3 size={14} /> {yearCounts[year] || '...'} Questions</div>
-            {savedResults[year] && (
+            {savedResults[year] && savedResults[year].score !== undefined && (
               <button className="year-card-result-btn" onClick={(e) => { e.stopPropagation(); onViewResult(Number(year)) }}>
-                📊 Last: {savedResults[year].score.toFixed(1)}
+                📊 Last: {Number(savedResults[year].score).toFixed(1)}
               </button>
             )}
           </div>
@@ -256,8 +256,8 @@ function ExamScreen({ questions, onSubmit, onQuit, duration = EXAM_DURATION }) {
           </div>
         </div>
         <div className="sidebar-submit">
-          <button className="btn btn-primary" style={{ width: '100%', marginBottom: '8px' }} onClick={() => setShowConfirm(true)}>Submit</button>
-          <button className="btn btn-secondary" style={{ width: '100%' }} onClick={() => setShowQuitConfirm(true)}>Quit</button>
+          <button className="btn btn-primary" onClick={() => setShowConfirm(true)}>Submit</button>
+          <button className="btn btn-secondary" onClick={() => setShowQuitConfirm(true)}>Quit</button>
         </div>
       </div>
       {(showConfirm || showQuitConfirm) && (
