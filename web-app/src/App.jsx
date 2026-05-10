@@ -1,527 +1,275 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { 
+  Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, 
+  PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend 
+} from 'recharts'
+import { Sun, Moon, Keyboard, BarChart3, Clock, CheckCircle2, XCircle, AlertCircle, ChevronLeft, ChevronRight, BookOpen, Target, GraduationCap, Bookmark, BookmarkCheck } from 'lucide-react'
 import './index.css'
 
-// ─── Year-to-filename mapping (strict segregation per year) ───
+// ─── Constants & Data ───
 const YEAR_FILES = {
-  2012: 'upsc2012.json',
-  2013: 'upsc2013.json',
-  2014: 'gs_prelims_2014.json',
-  2015: 'upsc2015.json',
-  2016: 'upsc2016.json',
-  2017: 'upsc2017.json',
-  2018: 'upsc2018.json',
-  2019: 'GS_Prelims_2019_Questions.json',
-  2020: 'GS_Prelims_2020_Questions.json',
-  2021: 'GS_Prelims_2021_Questions.json',
-  2022: 'upsc2022.json',
-  2023: 'GS_Prelims_2023_Questions.json',
-  2024: 'upsc2024.json',
-  2025: 'GS_Prelims_2025_Questions.json',
+  2012: 'upsc2012.json', 2013: 'upsc2013.json', 2014: 'gs_prelims_2014.json',
+  2015: 'upsc2015.json', 2016: 'upsc2016.json', 2017: 'upsc2017.json',
+  2018: 'upsc2018.json', 2019: 'GS_Prelims_2019_Questions.json',
+  2020: 'GS_Prelims_2020_Questions.json', 2021: 'GS_Prelims_2021_Questions.json',
+  2022: 'upsc2022.json', 2023: 'GS_Prelims_2023_Questions.json',
+  2024: 'upsc2024.json', 2025: 'GS_Prelims_2025_Questions.json',
 }
 
-// ─── Normalize answer to single uppercase letter ───
+const HISTORICAL_CUTOFFS = {
+  2024: 94.46, 2023: 75.41, 2022: 88.22, 2021: 87.54, 2020: 92.51,
+  2019: 98.00, 2018: 98.00, 2017: 105.34, 2016: 116.00, 2015: 107.34,
+}
+
+const SECTION_MAP = {
+  'POLITY': 'Polity', 'ECONOMY': 'Economy', 'ECONOMICS': 'Economy',
+  'GEOGRAPHY': 'Geography', 'ENVIRONMENT': 'Environment', 'ECOLOGY': 'Environment',
+  'HISTORY': 'History', 'ANCIENT': 'History', 'MEDIEVAL': 'History', 'MODERN': 'History',
+  'SCIENCE': 'Science & Tech', 'TECH': 'Science & Tech', 'ART': 'Art & Culture', 'CULTURE': 'Art & Culture',
+  'CURRENT': 'Current Affairs'
+}
+
+const EXAM_DURATION = 120 * 60
+const MARKS_CORRECT = 2
+const MARKS_INCORRECT = -0.67
+
+// ─── Helpers ───
 function normalizeAnswer(raw) {
   if (!raw) return ''
   const s = raw.toString().trim().toUpperCase()
-  // Match patterns like "(A)", "A", "(A) Some text", "a"
   const m = s.match(/^\(?([A-D])\)?/)
-  if (m) return m[1]
-  return s.charAt(0)
+  return m ? m[1] : s.charAt(0)
 }
 
-// ─── Normalize difficulty ───
 function normalizeDifficulty(d) {
   if (!d) return 'Medium'
   const s = d.toString().trim().toUpperCase()
-  if (s === 'E' || s.startsWith('EASY')) return 'Easy'
-  if (s === 'D' || s.startsWith('DIFF') || s.startsWith('HARD')) return 'Difficult'
+  if (s.startsWith('E')) return 'Easy'
+  if (s.startsWith('D') || s.startsWith('H')) return 'Difficult'
   return 'Medium'
 }
 
-// ─── Fetch questions for a specific year ───
+function normalizeSection(sec) {
+  if (!sec) return 'General'
+  const s = sec.toString().toUpperCase()
+  for (const [key, val] of Object.entries(SECTION_MAP)) {
+    if (s.includes(key)) return val
+  }
+  return 'General'
+}
+
 async function fetchYearQuestions(year) {
   const filename = YEAR_FILES[year]
   if (!filename) return []
   const res = await fetch(`/upsc_jsons/${filename}`)
   let data = await res.json()
-  // Handle different JSON structures
-  if (!Array.isArray(data)) {
-    if (data.questions && Array.isArray(data.questions)) data = data.questions
-    else data = [data]
-  }
-  // Filter out empty/malformed entries and normalize
+  if (!Array.isArray(data)) data = data.questions || [data]
   return data
-    .filter(q => q && q.question && q.options && Object.keys(q.options).length >= 2)
+    .filter(q => q && q.question && q.options)
     .map((q, idx) => ({
-      id: q.id || idx + 1,
-      index: idx,
-      year,
-      section: q.section || 'General',
-      question: q.question,
-      options: q.options,
+      id: q.id || `${year}_${idx}`,
+      index: idx, year,
+      section: normalizeSection(q.section),
+      question: q.question, options: q.options,
       answer: normalizeAnswer(q.answer),
       explanation: q.explanation || '',
-      motivation: q.motivation || '',
       difficulty: normalizeDifficulty(q.difficulty),
     }))
 }
 
-// ─── Fetch question counts for all years (for home screen) ───
 async function fetchAllYearCounts() {
   const counts = {}
   for (const year of Object.keys(YEAR_FILES)) {
     try {
       const qs = await fetchYearQuestions(Number(year))
       counts[year] = qs.length
-    } catch {
-      counts[year] = 0
-    }
+    } catch { counts[year] = 0 }
   }
   return counts
 }
 
-// ─── Constants ───
-const EXAM_DURATION = 120 * 60 // 2 hours in seconds
-const MARKS_CORRECT = 2
-const MARKS_INCORRECT = -0.67
+// ─── Components ───
 
-// ─── Emblem SVG ───
-function EmblemIcon() {
-  return (
-    <svg className="header-emblem" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="50" cy="50" r="45" stroke="#F5A623" strokeWidth="2" />
-      <circle cx="50" cy="50" r="8" stroke="#F5A623" strokeWidth="2" />
-      <line x1="50" y1="5" x2="50" y2="95" stroke="#F5A623" strokeWidth="1" />
-      <line x1="5" y1="50" x2="95" y2="50" stroke="#F5A623" strokeWidth="1" />
-      <line x1="18" y1="18" x2="82" y2="82" stroke="#F5A623" strokeWidth="1" />
-      <line x1="82" y1="18" x2="18" y2="82" stroke="#F5A623" strokeWidth="1" />
-      {[0, 45, 90, 135, 180, 225, 270, 315].map(angle => {
-        const rad = (angle * Math.PI) / 180
-        const x1 = 50 + 12 * Math.cos(rad)
-        const y1 = 50 + 12 * Math.sin(rad)
-        const x2 = 50 + 42 * Math.cos(rad)
-        const y2 = 50 + 42 * Math.sin(rad)
-        return <line key={angle} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#F5A623" strokeWidth="0.5" opacity="0.6" />
-      })}
-    </svg>
-  )
-}
-
-// ─── Header ───
-function Header({ onHome }) {
+function Header({ onHome, theme, toggleTheme, onMistakeBook, onBookmarks }) {
   return (
     <header className="app-header">
       <div className="header-brand" onClick={onHome} style={{ cursor: 'pointer' }}>
-        <EmblemIcon />
-        <div>
-          <div className="header-title">UPSC Civil Services Examination</div>
-          <div className="header-subtitle">General Studies — Preliminary</div>
-        </div>
+        <div className="header-title">TestBook</div>
+        <div className="header-subtitle">Advanced Study Ecosystem</div>
+      </div>
+      <div className="header-actions">
+        <button className="btn btn-secondary btn-small" onClick={onBookmarks} title="Review Bookmarks">
+          <Bookmark size={16} /> <span className="hide-mobile">Bookmarks</span>
+        </button>
+        <button className="btn btn-secondary btn-small" onClick={onMistakeBook} title="Review Mistakes">
+          <BookOpen size={16} /> <span className="hide-mobile">Mistakes</span>
+        </button>
+        <button className="theme-toggle" onClick={toggleTheme}>
+          {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+        </button>
       </div>
     </header>
   )
 }
 
-// ─── Home Screen ───
-function HomeScreen({ yearCounts, onSelectYear, savedResults, onViewResult }) {
+function HomeScreen({ yearCounts, onSelectYear, savedResults, onViewResult, onDeepDive }) {
   const years = Object.keys(YEAR_FILES).sort((a, b) => b - a)
+  const categories = ['History', 'Polity', 'Geography', 'Economy', 'Environment', 'Science & Tech', 'Art & Culture', 'Current Affairs']
 
   return (
     <div className="home-screen fade-in">
       <div className="home-hero">
-        <h1>UPSC Prelims Mock Test</h1>
-        <p>
-          Practice with authentic Previous Year Questions from 2012 to 2025.
-          Select a year to begin your exam simulation.
-        </p>
+        <h1>Welcome to TestBook</h1>
+        <p>Your minimalist, data-driven UPSC Prelims preparation companion.</p>
       </div>
+
+      <div className="home-section-title"><Target size={20} /> Annual Mock Tests</div>
       <div className="year-grid">
         {years.map(year => (
-          <div
-            key={year}
-            className="year-card slide-up"
-            onClick={() => onSelectYear(Number(year))}
-          >
+          <div key={year} className="year-card slide-up" onClick={() => onSelectYear(Number(year))}>
             <div className="year-card-year">{year}</div>
-            <div className="year-card-label">GS Paper I</div>
-            <div className="year-card-info">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-              <span>{yearCounts[year] || '...'} Questions</span>
-            </div>
-            <div className="year-card-badge">Previous Year Questions</div>
-            {savedResults && savedResults[year] && (
-              <button
-                className="year-card-result-btn"
-                onClick={(e) => { e.stopPropagation(); onViewResult(Number(year)) }}
-              >
-                📊 View Last Result
-                <span className="result-date">
-                  {new Date(savedResults[year].timestamp).toLocaleDateString()}
-                </span>
+            <div className="year-card-info"><BarChart3 size={14} /> {yearCounts[year] || '...'} Questions</div>
+            {savedResults[year] && (
+              <button className="year-card-result-btn" onClick={(e) => { e.stopPropagation(); onViewResult(Number(year)) }}>
+                📊 Last: {savedResults[year].score.toFixed(1)}
               </button>
             )}
           </div>
         ))}
       </div>
-    </div>
-  )
-}
 
-// ─── Pre-Test Modal ───
-function PreTestModal({ year, questionCount, onStart, onClose }) {
-  return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal-content slide-up">
-        <h2>UPSC Prelims {year}</h2>
-        <div className="modal-info-grid">
-          <div className="modal-info-item">
-            <div className="label">Total Questions</div>
-            <div className="value">{questionCount}</div>
+      <div className="home-section-title" style={{ marginTop: '48px' }}><GraduationCap size={20} /> Topic Deep Dive</div>
+      <div className="category-grid">
+        {categories.map(cat => (
+          <div key={cat} className="category-card" onClick={() => onDeepDive(cat)}>
+            <div className="category-name">{cat}</div>
+            <div className="category-desc">Practice across all years</div>
           </div>
-          <div className="modal-info-item">
-            <div className="label">Duration</div>
-            <div className="value">2 Hours</div>
-          </div>
-          <div className="modal-info-item">
-            <div className="label">Correct Answer</div>
-            <div className="value" style={{ color: '#22C55E' }}>+2.00</div>
-          </div>
-          <div className="modal-info-item">
-            <div className="label">Wrong Answer</div>
-            <div className="value" style={{ color: '#EF4444' }}>−0.67</div>
-          </div>
-        </div>
-        <div className="modal-rules">
-          <h4>Exam Rules</h4>
-          <ul>
-            <li>Each question carries 2 marks</li>
-            <li>1/3rd negative marking for incorrect answers</li>
-            <li>No penalty for unattempted questions</li>
-            <li>Timer will auto-submit when time expires</li>
-            <li>You can mark questions for review</li>
-            <li>Progress is saved automatically</li>
-          </ul>
-        </div>
-        <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={onStart}>
-            Start Exam →
-          </button>
-        </div>
+        ))}
       </div>
     </div>
   )
 }
 
-// ─── Timer Hook (with pause/resume + localStorage persistence) ───
-function useTimer(initialSeconds, onExpire, storageKey) {
-  const [seconds, setSeconds] = useState(() => {
-    if (storageKey) {
-      const saved = localStorage.getItem(storageKey)
-      if (saved !== null) {
-        const parsed = parseInt(saved, 10)
-        if (!isNaN(parsed) && parsed > 0) return parsed
-      }
-    }
-    return initialSeconds
-  })
-  const [isPaused, setIsPaused] = useState(false)
-  const intervalRef = useRef(null)
-
-  // Persist seconds to localStorage on every tick
-  useEffect(() => {
-    if (storageKey) {
-      localStorage.setItem(storageKey, seconds.toString())
-    }
-  }, [seconds, storageKey])
-
-  const startInterval = useCallback(() => {
-    clearInterval(intervalRef.current)
-    intervalRef.current = setInterval(() => {
-      setSeconds(prev => {
-        if (prev <= 1) {
-          clearInterval(intervalRef.current)
-          onExpire()
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-  }, [onExpire])
-
-  useEffect(() => {
-    if (!isPaused) {
-      startInterval()
-    } else {
-      clearInterval(intervalRef.current)
-    }
-    return () => clearInterval(intervalRef.current)
-  }, [isPaused, startInterval])
-
-  const togglePause = useCallback(() => {
-    setIsPaused(prev => !prev)
-  }, [])
-
-  const formatTime = useCallback(() => {
-    const h = Math.floor(seconds / 3600)
-    const m = Math.floor((seconds % 3600) / 60)
-    const s = seconds % 60
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-  }, [seconds])
-
-  return { seconds, formatTime, isPaused, togglePause }
-}
-
-// ─── Helper: read saved exam progress from localStorage ───
-function loadExamProgress(year) {
-  try {
-    const saved = localStorage.getItem(`upsc_exam_${year}`)
-    if (saved) return JSON.parse(saved)
-  } catch { /* ignore */ }
-  return null
-}
-
-// ─── Exam Screen ───
-function ExamScreen({ year, questions, onSubmit }) {
-  // Lazy-init all state from localStorage so refresh restores everything instantly
-  const [currentIdx, setCurrentIdx] = useState(() => {
-    const saved = loadExamProgress(year)
-    return saved?.currentIdx ?? 0
-  })
-  const [responses, setResponses] = useState(() => {
-    const saved = loadExamProgress(year)
-    return saved?.responses ?? {}
-  })
-  const [marked, setMarked] = useState(() => {
-    const saved = loadExamProgress(year)
-    return new Set(saved?.marked ?? [])
-  })
-  const [visited, setVisited] = useState(() => {
-    const saved = loadExamProgress(year)
-    return new Set(saved?.visited ?? [0])
-  })
-  const [sectionFilter, setSectionFilter] = useState('All')
+function ExamScreen({ questions, onSubmit, onQuit, duration = EXAM_DURATION }) {
+  const [currentIdx, setCurrentIdx] = useState(0)
+  const [responses, setResponses] = useState({})
+  const [marked, setMarked] = useState(new Set())
+  const [visited, setVisited] = useState(new Set([0]))
   const [showConfirm, setShowConfirm] = useState(false)
+  const [showQuitConfirm, setShowQuitConfirm] = useState(false)
+  const [bookmarkedIds, setBookmarkedIds] = useState(() => new Set(JSON.parse(localStorage.getItem('upsc_bookmarks') || '[]').map(q => q.id)))
 
-  const handleExpire = useCallback(() => {
-    onSubmit(responses)
-  }, [responses, onSubmit])
+  const handleExpire = useCallback(() => onSubmit(responses), [responses, onSubmit])
+  const { formatTime, isPaused, togglePause } = useTimer(duration, handleExpire)
 
-  const { seconds, formatTime, isPaused, togglePause } = useTimer(EXAM_DURATION, handleExpire, `upsc_timer_${year}`)
+  const selectOption = useCallback((letter) => setResponses(prev => ({ ...prev, [currentIdx]: letter })), [currentIdx])
+  const toggleMark = useCallback(() => setMarked(prev => {
+    const next = new Set(prev); next.has(currentIdx) ? next.delete(currentIdx) : next.add(currentIdx); return next
+  }), [currentIdx])
+  const goToQuestion = useCallback((idx) => { setCurrentIdx(idx); setVisited(v => new Set(v).add(idx)) }, [])
+  const goNext = useCallback(() => currentIdx < questions.length - 1 && goToQuestion(currentIdx + 1), [currentIdx, questions.length, goToQuestion])
+  const goPrev = useCallback(() => currentIdx > 0 && goToQuestion(currentIdx - 1), [currentIdx, goToQuestion])
 
-  // Save progress to localStorage on every change
+  const toggleBookmark = useCallback(() => {
+    const q = questions[currentIdx]
+    const currentBookmarks = JSON.parse(localStorage.getItem('upsc_bookmarks') || '[]')
+    let nextBookmarks
+    if (bookmarkedIds.has(q.id)) {
+      nextBookmarks = currentBookmarks.filter(b => b.id !== q.id)
+      setBookmarkedIds(prev => { const next = new Set(prev); next.delete(q.id); return next })
+    } else {
+      nextBookmarks = [...currentBookmarks, q]
+      setBookmarkedIds(prev => { const next = new Set(prev); next.add(q.id); return next })
+    }
+    localStorage.setItem('upsc_bookmarks', JSON.stringify(nextBookmarks))
+  }, [currentIdx, questions, bookmarkedIds])
+
   useEffect(() => {
-    const key = `upsc_exam_${year}`
-    localStorage.setItem(key, JSON.stringify({ responses, marked: [...marked], visited: [...visited], currentIdx }))
-  }, [responses, marked, visited, currentIdx, year])
+    const handleKeyDown = (e) => {
+      if (isPaused || showConfirm || showQuitConfirm) return
+      const key = e.key.toUpperCase()
+      if (key === 'ARROWLEFT') goPrev()
+      else if (key === 'ARROWRIGHT') goNext()
+      else if (['A', 'B', 'C', 'D'].includes(key)) selectOption(key)
+      else if (key === 'M') toggleMark()
+      else if (key === 'B') toggleBookmark()
+    }
+    window.addEventListener('keydown', handleKeyDown); return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isPaused, showConfirm, showQuitConfirm, goPrev, goNext, selectOption, toggleMark, toggleBookmark])
 
   const currentQ = questions[currentIdx]
-  const sections = ['All', ...new Set(questions.map(q => q.section))]
-
-  const selectOption = (letter) => {
-    setResponses(prev => ({ ...prev, [currentIdx]: letter.toUpperCase() }))
-  }
-
-  const clearResponse = () => {
-    setResponses(prev => {
-      const next = { ...prev }
-      delete next[currentIdx]
-      return next
-    })
-  }
-
-  const toggleMark = () => {
-    setMarked(prev => {
-      const next = new Set(prev)
-      if (next.has(currentIdx)) next.delete(currentIdx)
-      else next.add(currentIdx)
-      return next
-    })
-  }
-
-  const goToQuestion = (idx) => {
-    setCurrentIdx(idx)
-    setVisited(prev => new Set(prev).add(idx))
-  }
-
-  const goNext = () => {
-    if (currentIdx < questions.length - 1) {
-      goToQuestion(currentIdx + 1)
-    }
-  }
-
-  const goPrev = () => {
-    if (currentIdx > 0) {
-      goToQuestion(currentIdx - 1)
-    }
-  }
-
-  const handleSubmit = () => {
-    localStorage.removeItem(`upsc_exam_${year}`)
-    localStorage.removeItem(`upsc_timer_${year}`)
-    localStorage.removeItem('upsc_active_session')
-    onSubmit(responses)
-  }
-
-  const getQuestionStatus = (idx) => {
-    if (responses[idx] !== undefined && marked.has(idx)) return 'answered marked'
-    if (responses[idx] !== undefined) return 'answered'
-    if (marked.has(idx)) return 'marked'
-    if (visited.has(idx) && responses[idx] === undefined) return 'not-answered'
-    return ''
-  }
-
-  const filteredIndices = questions.map((q, i) => i).filter(i =>
-    sectionFilter === 'All' || questions[i].section === sectionFilter
-  )
-
   const attempted = Object.keys(responses).length
-  const markedCount = marked.size
 
   return (
     <div className="exam-screen fade-in">
-      {/* Pause overlay */}
       {isPaused && (
         <div className="pause-overlay" onClick={togglePause}>
-          <div className="pause-overlay-content">
-            <div className="pause-icon">⏸</div>
+          <div className="pause-overlay-content" onClick={e => e.stopPropagation()}>
+            <div className="pause-icon"><Clock size={48} /></div>
             <h2>Exam Paused</h2>
-            <p>Click anywhere or press the Resume button to continue</p>
-            <button className="btn btn-primary" style={{ marginTop: '24px' }} onClick={togglePause}>
-              ▶ Resume Exam
-            </button>
+            <button className="btn btn-primary" onClick={togglePause} style={{ marginTop: '24px' }}>Resume</button>
           </div>
         </div>
       )}
-      {/* Main question area */}
       <div className="exam-main">
         <div className="question-header">
-          <span className="question-number">Question {currentIdx + 1} of {questions.length}</span>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span className="question-number">Question {currentIdx + 1} of {questions.length}</span>
+            <button className={`bookmark-btn ${bookmarkedIds.has(currentQ.id) ? 'active' : ''}`} onClick={toggleBookmark} title="Bookmark (B)">
+              {bookmarkedIds.has(currentQ.id) ? <BookmarkCheck size={20} /> : <Bookmark size={20} />}
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
             <span className="question-section-badge">{currentQ.section}</span>
-            <span className={`question-difficulty diff-${currentQ.difficulty.toLowerCase()}`}>
-              {currentQ.difficulty}
-            </span>
+            <span className={`question-difficulty diff-${currentQ.difficulty.toLowerCase()}`}>{currentQ.difficulty}</span>
           </div>
         </div>
-
         <div className="question-text">{currentQ.question}</div>
-
         <div className="options-list">
-          {Object.entries(currentQ.options).map(([letter, text]) => (
-            <div
-              key={letter}
-              className={`option-item ${responses[currentIdx] === letter.toUpperCase() ? 'selected' : ''}`}
-              onClick={() => selectOption(letter)}
-            >
+          {Object.entries(currentQ.options).map(([l, t]) => (
+            <div key={l} className={`option-item ${responses[currentIdx] === l.toUpperCase() ? 'selected' : ''}`} onClick={() => selectOption(l.toUpperCase())}>
               <div className="option-radio"></div>
-              <span className="option-letter">({letter.toUpperCase()})</span>
-              <span className="option-text">{text}</span>
+              <span className="option-letter">({l.toUpperCase()})</span>
+              <span className="option-text">{t}</span>
             </div>
           ))}
         </div>
-
         <div className="question-actions">
-          <button className="btn btn-secondary btn-small" onClick={clearResponse}>
-            Clear Response
-          </button>
-          <button className="btn btn-secondary btn-small" onClick={toggleMark}>
-            {marked.has(currentIdx) ? '★ Unmark Review' : '☆ Mark for Review'}
-          </button>
-          <button className="btn btn-secondary btn-small" onClick={goPrev} disabled={currentIdx === 0}>
-            ← Previous
-          </button>
-          <button className="btn btn-primary btn-small" onClick={goNext} disabled={currentIdx === questions.length - 1}>
-            Save & Next →
-          </button>
+          <button className="btn btn-secondary btn-small" onClick={() => selectOption(undefined)}>Clear</button>
+          <button className="btn btn-secondary btn-small" onClick={toggleMark}>{marked.has(currentIdx) ? 'Unmark' : 'Mark Review'}</button>
+          <button className="btn btn-secondary btn-small" onClick={goPrev} disabled={currentIdx === 0}><ChevronLeft size={16} /> Prev</button>
+          <button className="btn btn-primary btn-small" onClick={goNext} disabled={currentIdx === questions.length - 1}>Next <ChevronRight size={16} /></button>
         </div>
       </div>
-
-      {/* Sidebar */}
       <div className="exam-sidebar">
-        {/* Timer */}
         <div className="timer-bar">
-          <div>
-            <div className="timer-label">Time Remaining</div>
-            <div className={`timer-display ${seconds < 300 ? 'urgent' : ''} ${isPaused ? 'paused' : ''}`}>
-              {formatTime()}
-            </div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-            <button
-              className={`btn-pause ${isPaused ? 'is-paused' : ''}`}
-              onClick={togglePause}
-              title={isPaused ? 'Resume Timer' : 'Pause Timer'}
-            >
-              {isPaused ? '▶ Resume' : '⏸ Pause'}
-            </button>
-            <div style={{ textAlign: 'right', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              <div>{attempted}/{questions.length} answered</div>
-              <div>{markedCount} marked</div>
-            </div>
-          </div>
+          <div><div className="timer-label">Remaining</div><div className="timer-display">{formatTime()}</div></div>
+          <button className="btn-pause" onClick={togglePause}>{isPaused ? 'Resume' : 'Pause'}</button>
         </div>
-
-        {/* Section filter */}
-        <div className="section-filter">
-          {sections.map(sec => (
-            <button
-              key={sec}
-              className={`section-pill ${sectionFilter === sec ? 'active' : ''}`}
-              onClick={() => setSectionFilter(sec)}
-            >
-              {sec}
-            </button>
-          ))}
-        </div>
-
-        {/* Question palette */}
         <div className="palette-container">
-          <div className="palette-title">Question Palette</div>
           <div className="palette-grid">
-            {filteredIndices.map(idx => (
-              <button
-                key={idx}
-                className={`palette-btn ${getQuestionStatus(idx)} ${idx === currentIdx ? 'current' : ''}`}
-                onClick={() => goToQuestion(idx)}
-              >
-                {idx + 1}
-              </button>
-            ))}
+            {questions.map((_, idx) => {
+              const status = responses[idx] ? (marked.has(idx) ? 'answered marked' : 'answered') : (marked.has(idx) ? 'marked' : (visited.has(idx) ? 'not-answered' : ''))
+              return <button key={idx} className={`palette-btn ${status} ${idx === currentIdx ? 'current' : ''}`} onClick={() => goToQuestion(idx)}>{idx + 1}</button>
+            })}
           </div>
         </div>
-
-        {/* Legend */}
-        <div className="palette-legend">
-          <div className="legend-item"><span className="legend-dot not-visited"></span>Not Visited</div>
-          <div className="legend-item"><span className="legend-dot answered"></span>Answered</div>
-          <div className="legend-item"><span className="legend-dot marked"></span>Marked</div>
-          <div className="legend-item"><span className="legend-dot not-answered"></span>Not Answered</div>
-        </div>
-
-        {/* Submit */}
         <div className="sidebar-submit">
-          <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setShowConfirm(true)}>
-            Submit Exam
-          </button>
+          <button className="btn btn-primary" style={{ width: '100%', marginBottom: '8px' }} onClick={() => setShowConfirm(true)}>Submit</button>
+          <button className="btn btn-secondary" style={{ width: '100%' }} onClick={() => setShowQuitConfirm(true)}>Quit</button>
         </div>
       </div>
-
-      {/* Confirm submit modal */}
-      {showConfirm && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowConfirm(false)}>
-          <div className="modal-content slide-up">
-            <h2>Submit Exam?</h2>
-            <div style={{ margin: '16px 0', color: 'var(--text-secondary)' }}>
-              <p>You have answered <strong style={{ color: 'var(--success)' }}>{attempted}</strong> out of <strong>{questions.length}</strong> questions.</p>
-              <p style={{ marginTop: '8px' }}>{questions.length - attempted} questions are unattempted.</p>
-              {markedCount > 0 && <p style={{ marginTop: '8px', color: 'var(--warning)' }}>{markedCount} questions are marked for review.</p>}
-            </div>
-            <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setShowConfirm(false)}>Continue Exam</button>
-              <button className="btn btn-primary" onClick={handleSubmit}>Submit Now</button>
+      {(showConfirm || showQuitConfirm) && (
+        <div className="modal-overlay" onClick={() => { setShowConfirm(false); setShowQuitConfirm(false) }}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <h2>{showConfirm ? 'Submit Exam?' : 'Quit Exam?'}</h2>
+            <p>{showConfirm ? `You have attempted ${attempted} out of ${questions.length} questions.` : 'Your current progress will be lost.'}</p>
+            <div className="modal-actions" style={{ marginTop: '24px' }}>
+              <button className="btn btn-secondary" onClick={() => { setShowConfirm(false); setShowQuitConfirm(false) }}>Cancel</button>
+              <button className="btn btn-primary" style={showQuitConfirm ? { background: 'var(--error)' } : {}} onClick={showConfirm ? () => onSubmit(responses) : onQuit}>
+                {showConfirm ? 'Submit Now' : 'Quit Now'}
+              </button>
             </div>
           </div>
         </div>
@@ -530,586 +278,262 @@ function ExamScreen({ year, questions, onSubmit }) {
   )
 }
 
-// ─── Custom Notes Component ───
-function QuestionNotes({ year, questionId }) {
-  const storageKey = `upsc_notes_${year}_${questionId}`
-  const [note, setNote] = useState(() => localStorage.getItem(storageKey) || '')
-  const [saved, setSaved] = useState(false)
-
-  const handleChange = (e) => {
-    const val = e.target.value
-    setNote(val)
-    localStorage.setItem(storageKey, val)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 1500)
-  }
-
-  return (
-    <div className="my-notes-container">
-      <div className="my-notes-header">
-        <strong>📝 My Notes</strong>
-        {saved && <span className="notes-saved-indicator">✓ Saved</span>}
-      </div>
-      <textarea
-        className="my-notes-textarea"
-        value={note}
-        onChange={handleChange}
-        placeholder="Write your own explanation or notes here… These are saved permanently."
-        rows={4}
-      />
-    </div>
-  )
-}
-
-// ─── Scorecard Screen ───
 function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
   const [activeTab, setActiveTab] = useState('summary')
-  const [reviewFilter, setReviewFilter] = useState('all') // all, correct, incorrect, unattempted
   const [reviewIdx, setReviewIdx] = useState(0)
+  const [bookmarkedIds, setBookmarkedIds] = useState(() => new Set(JSON.parse(localStorage.getItem('upsc_bookmarks') || '[]').map(q => q.id)))
 
-  // Calculate results
-  let correct = 0, incorrect = 0, unattempted = 0
-  let totalMarks = 0, negativeMarks = 0
+  const stats = useMemo(() => {
+    let correct = 0, incorrect = 0, unattempted = 0, totalMarks = 0
+    const sectionStats = {}
+    questions.forEach((q, idx) => {
+      if (!sectionStats[q.section]) sectionStats[q.section] = { total: 0, correct: 0, marks: 0 }
+      const s = sectionStats[q.section]; s.total++
+      const ans = responses[idx]
+      if (ans === undefined) unattempted++
+      else if (ans === q.answer) { correct++; s.correct++; totalMarks += MARKS_CORRECT; s.marks += MARKS_CORRECT }
+      else { incorrect++; totalMarks += MARKS_INCORRECT; s.marks += MARKS_INCORRECT }
+    })
+    const cutoff = HISTORICAL_CUTOFFS[year] || null
+    return { correct, incorrect, unattempted, totalMarks, cutoff, qualified: cutoff ? totalMarks >= cutoff : null, 
+      radarData: Object.entries(sectionStats).map(([name, s]) => ({ subject: name, score: Math.max(0, (s.marks / (s.total * 2)) * 100) })),
+      pieData: [{ name: 'Correct', value: correct, color: '#10b981' }, { name: 'Incorrect', value: incorrect, color: '#ef4444' }, { name: 'Unattempted', value: unattempted, color: '#9ca3af' }]
+    }
+  }, [questions, responses, year])
 
-  questions.forEach((q, idx) => {
-    const userAnswer = responses[idx]
-    if (userAnswer === undefined) {
-      unattempted++
-    } else if (userAnswer === q.answer) {
-      correct++
-      totalMarks += MARKS_CORRECT
+  const toggleBookmark = useCallback((q) => {
+    const currentBookmarks = JSON.parse(localStorage.getItem('upsc_bookmarks') || '[]')
+    let nextBookmarks
+    if (bookmarkedIds.has(q.id)) {
+      nextBookmarks = currentBookmarks.filter(b => b.id !== q.id)
+      setBookmarkedIds(prev => { const next = new Set(prev); next.delete(q.id); return next })
     } else {
-      incorrect++
-      totalMarks += MARKS_INCORRECT
-      negativeMarks += Math.abs(MARKS_INCORRECT)
+      nextBookmarks = [...currentBookmarks, q]
+      setBookmarkedIds(prev => { const next = new Set(prev); next.add(q.id); return next })
     }
-  })
-
-  const maxMarks = questions.length * MARKS_CORRECT
-  const accuracy = correct + incorrect > 0 ? ((correct / (correct + incorrect)) * 100).toFixed(1) : 0
-  const percentage = ((totalMarks / maxMarks) * 100).toFixed(1)
-
-  // Section analysis
-  const sectionStats = {}
-  questions.forEach((q, idx) => {
-    if (!sectionStats[q.section]) {
-      sectionStats[q.section] = { total: 0, correct: 0, incorrect: 0, unattempted: 0, marks: 0 }
-    }
-    const s = sectionStats[q.section]
-    s.total++
-    const userAnswer = responses[idx]
-    if (userAnswer === undefined) {
-      s.unattempted++
-    } else if (userAnswer === q.answer) {
-      s.correct++
-      s.marks += MARKS_CORRECT
-    } else {
-      s.incorrect++
-      s.marks += MARKS_INCORRECT
-    }
-  })
-
-  // Difficulty breakdown
-  const difficultyStats = { Easy: { total: 0, correct: 0, incorrect: 0 }, Medium: { total: 0, correct: 0, incorrect: 0 }, Difficult: { total: 0, correct: 0, incorrect: 0 } }
-  questions.forEach((q, idx) => {
-    const d = q.difficulty
-    if (!difficultyStats[d]) return
-    difficultyStats[d].total++
-    const userAnswer = responses[idx]
-    if (userAnswer === q.answer) difficultyStats[d].correct++
-    else if (userAnswer !== undefined) difficultyStats[d].incorrect++
-  })
-
-  // Filtered questions for review tab
-  const reviewQuestions = questions.map((q, idx) => ({
-    ...q,
-    idx,
-    userAnswer: responses[idx],
-    status: responses[idx] === undefined ? 'unattempted' : responses[idx] === q.answer ? 'correct' : 'incorrect'
-  })).filter(q => reviewFilter === 'all' || q.status === reviewFilter)
+    localStorage.setItem('upsc_bookmarks', JSON.stringify(nextBookmarks))
+  }, [bookmarkedIds])
 
   return (
     <div className="scorecard-screen fade-in">
       <div className="scorecard-header">
-        <h1>Exam Result — UPSC {year}</h1>
-        <p>Detailed analysis of your performance</p>
+        <h1>Exam Result — {year || 'Special Attempt'}</h1>
+        {stats.cutoff && (
+          <div className={`status-badge ${stats.qualified ? 'qualified' : 'failed'}`}>
+            {stats.qualified ? 'QUALIFIED' : 'NOT QUALIFIED'}
+            <small>Cut-off: {stats.cutoff} | Your Score: {stats.totalMarks.toFixed(2)}</small>
+          </div>
+        )}
       </div>
 
-      {/* Score Hero */}
       <div className="score-hero">
         <div className="score-circle">
-          <div className="big-number">{totalMarks.toFixed(2)}</div>
-          <div className="small-label">out of {maxMarks}</div>
+          <div className="big-number">{stats.totalMarks.toFixed(2)}</div>
+          <div className="small-label">Score</div>
         </div>
         <div className="score-circle" style={{ borderColor: 'var(--success)' }}>
-          <div className="big-number" style={{ color: 'var(--success)' }}>{accuracy}%</div>
+          <div className="big-number" style={{ color: 'var(--success)' }}>{((stats.correct / questions.length) * 100).toFixed(0)}%</div>
           <div className="small-label">Accuracy</div>
         </div>
       </div>
 
-      {/* Quick Stats */}
-      <div className="score-stats">
-        <div className="stat-card">
-          <div className="stat-value text-success">{correct}</div>
-          <div className="stat-label">Correct</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value text-error">{incorrect}</div>
-          <div className="stat-label">Incorrect</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value text-muted">{unattempted}</div>
-          <div className="stat-label">Unattempted</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value text-warning">{negativeMarks.toFixed(2)}</div>
-          <div className="stat-label">Negative Marks</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value text-accent">{percentage}%</div>
-          <div className="stat-label">Score %</div>
-        </div>
-      </div>
-
-      {/* Tabs */}
       <div className="tabs">
-        {[
-          { id: 'summary', label: 'Section Analysis' },
-          { id: 'review', label: 'Question Review' },
-          { id: 'difficulty', label: 'Difficulty Breakdown' },
-        ].map(tab => (
-          <button
-            key={tab.id}
-            className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
+        <button className={`tab-btn ${activeTab === 'summary' ? 'active' : ''}`} onClick={() => setActiveTab('summary')}>Analytics</button>
+        <button className={`tab-btn ${activeTab === 'review' ? 'active' : ''}`} onClick={() => setActiveTab('review')}>Review</button>
       </div>
 
-      {/* Tab Content */}
       {activeTab === 'summary' && (
-        <div className="fade-in">
-          {Object.entries(sectionStats)
-            .sort((a, b) => b[1].total - a[1].total)
-            .map(([section, stats]) => {
-              const maxSectionMarks = stats.total * MARKS_CORRECT
-              const scorePercent = maxSectionMarks > 0 ? Math.max(0, (stats.marks / maxSectionMarks) * 100) : 0
-              return (
-                <div key={section} className="section-bar-container">
-                  <div className="section-bar-label">
-                    <span>{section}</span>
-                    <span>{stats.correct}/{stats.total} correct · {stats.marks.toFixed(2)}/{maxSectionMarks} marks</span>
-                  </div>
-                  <div className="section-bar-track">
-                    <div className="section-bar-fill" style={{ width: `${scorePercent}%` }}></div>
-                  </div>
-                </div>
-              )
-            })}
+        <div className="analytics-grid fade-in">
+          <div className="analytics-card">
+            <h3>Subject Strengths</h3>
+            <ResponsiveContainer width="100%" height={300}>
+              <RadarChart data={stats.radarData}>
+                <PolarGrid stroke="var(--border)" />
+                <PolarAngleAxis dataKey="subject" tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                <Radar dataKey="score" stroke="#10b981" fill="#10b981" fillOpacity={0.4} />
+              </RadarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="analytics-card">
+            <h3>Accuracy Breakdown</h3>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie data={stats.pieData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                  {stats.pieData.map((e, i) => <Cell key={i} fill={e.color} />)}
+                </Pie>
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
 
       {activeTab === 'review' && (
         <div className="fade-in">
-          {/* Filter buttons */}
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', flexWrap: 'wrap' }}>
-            {[
-              { id: 'all', label: `All (${questions.length})` },
-              { id: 'correct', label: `Correct (${correct})` },
-              { id: 'incorrect', label: `Incorrect (${incorrect})` },
-              { id: 'unattempted', label: `Unattempted (${unattempted})` },
-            ].map(f => (
-              <button
-                key={f.id}
-                className={`btn btn-small ${reviewFilter === f.id ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => { setReviewFilter(f.id); setReviewIdx(0) }}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Question palette for quick navigation */}
-          {reviewQuestions.length > 0 && (
-            <div className="review-palette">
-              <div className="review-palette-title">Jump to Question</div>
-              <div className="review-palette-grid">
-                {reviewQuestions.map((rq, rIdx) => (
-                  <button
-                    key={rq.idx}
-                    className={`review-palette-btn ${rq.status} ${rIdx === Math.min(reviewIdx, reviewQuestions.length - 1) ? 'current' : ''}`}
-                    onClick={() => setReviewIdx(rIdx)}
-                    title={`Q${rq.idx + 1} — ${rq.status}`}
-                  >
-                    {rq.idx + 1}
-                  </button>
-                ))}
-              </div>
-              <div className="review-palette-legend">
-                <div className="legend-item"><span className="legend-dot answered"></span>Correct</div>
-                <div className="legend-item"><span className="legend-dot not-answered"></span>Incorrect</div>
-                <div className="legend-item"><span className="legend-dot unattempted-dot"></span>Unattempted</div>
-              </div>
-            </div>
-          )}
-
-          {/* Single question view — paginated */}
-          {reviewQuestions.length > 0 && (() => {
-            const q = reviewQuestions[Math.min(reviewIdx, reviewQuestions.length - 1)]
-            const safeIdx = Math.min(reviewIdx, reviewQuestions.length - 1)
-            const googleQuery = encodeURIComponent(q.question.substring(0, 200))
+          <div className="review-palette"><div className="review-palette-grid">
+            {questions.map((q, i) => {
+              const status = responses[i] === undefined ? 'unattempted' : (responses[i] === q.answer ? 'correct' : 'incorrect')
+              return <button key={i} className={`review-palette-btn ${status} ${i === reviewIdx ? 'current' : ''}`} onClick={() => setReviewIdx(i)}>{i + 1}</button>
+            })}
+          </div></div>
+          {(() => {
+            const q = questions[reviewIdx], ans = responses[reviewIdx]
             return (
-              <div>
-                {/* Navigation header */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-                  <button
-                    className="btn btn-secondary btn-small"
-                    onClick={() => setReviewIdx(Math.max(0, safeIdx - 1))}
-                    disabled={safeIdx === 0}
-                  >
-                    ← Previous
-                  </button>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: '1rem', fontWeight: 600 }}>
-                    {safeIdx + 1} of {reviewQuestions.length}
-                  </span>
-                  <button
-                    className="btn btn-secondary btn-small"
-                    onClick={() => setReviewIdx(Math.min(reviewQuestions.length - 1, safeIdx + 1))}
-                    disabled={safeIdx === reviewQuestions.length - 1}
-                  >
-                    Next →
-                  </button>
-                </div>
-
-                <div className="review-question" style={{ marginBottom: '20px' }}>
-                  <div className="review-question-header">
-                    <span className={`review-status-icon ${q.status}`}>
-                      {q.status === 'correct' ? '✓' : q.status === 'incorrect' ? '✗' : '—'}
+              <div className="review-question slide-up">
+                <div className="review-question-header">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span className={`review-status-icon ${ans === q.answer ? 'correct' : (ans === undefined ? 'unattempted' : 'incorrect')}`}>
+                      {ans === q.answer ? <CheckCircle2 size={16}/> : (ans === undefined ? <AlertCircle size={16}/> : <XCircle size={16}/>)}
                     </span>
-                    <span className="question-number">Q{q.idx + 1}</span>
-                    <span className="question-section-badge">{q.section}</span>
-                    <span className={`question-difficulty diff-${q.difficulty.toLowerCase()}`}>{q.difficulty}</span>
-                    <a
-                      className="google-search-link"
-                      href={`https://www.google.com/search?q=${googleQuery}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Search this question on Google"
-                    >
-                      🔍 Google
-                    </a>
+                    <span className="question-number">Q{reviewIdx + 1}</span>
+                    <button className={`bookmark-btn ${bookmarkedIds.has(q.id) ? 'active' : ''}`} onClick={() => toggleBookmark(q)}>
+                      {bookmarkedIds.has(q.id) ? <BookmarkCheck size={18} /> : <Bookmark size={18} />}
+                    </button>
                   </div>
-
-                  <div className="question-text" style={{ marginBottom: '16px' }}>{q.question}</div>
-
-                  <div className="options-list" style={{ marginBottom: '16px' }}>
-                    {Object.entries(q.options).map(([letter, text]) => {
-                      const L = letter.toUpperCase()
-                      const isCorrect = L === q.answer
-                      const isUserPick = L === q.userAnswer
-                      let cls = ''
-                      if (isCorrect) cls = 'correct'
-                      else if (isUserPick && !isCorrect) cls = 'incorrect'
-                      return (
-                        <div key={letter} className={`option-item ${cls}`} style={{ cursor: 'default' }}>
-                          <div className="option-radio"></div>
-                          <span className="option-letter">({L})</span>
-                          <span className="option-text">{text}</span>
-                          {isCorrect && <span style={{ marginLeft: 'auto', color: 'var(--success)', fontSize: '0.9rem', fontWeight: 600 }}>✓ Correct</span>}
-                          {isUserPick && !isCorrect && <span style={{ marginLeft: 'auto', color: 'var(--error)', fontSize: '0.9rem', fontWeight: 600 }}>Your Answer</span>}
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  {q.explanation && (
-                    <div className="explanation-box">
-                      <strong>Explanation</strong>
-                      <p style={{ marginTop: '10px' }}>{q.explanation}</p>
-                    </div>
-                  )}
-
-                  {q.motivation && (
-                    <div className="explanation-box" style={{ borderLeftColor: 'var(--success)', marginTop: '12px' }}>
-                      <strong style={{ color: 'var(--success)' }}>💡 Motivation &amp; Tip</strong>
-                      <p style={{ marginTop: '10px' }}>{q.motivation}</p>
-                    </div>
-                  )}
-
-                  {/* Custom notes per question — permanent */}
-                  <QuestionNotes key={`${year}_${q.id}`} year={year} questionId={q.id} />
+                  <span className="question-section-badge">{q.section}</span>
                 </div>
-
-                {/* Bottom navigation */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <button
-                    className="btn btn-secondary btn-small"
-                    onClick={() => setReviewIdx(Math.max(0, safeIdx - 1))}
-                    disabled={safeIdx === 0}
-                  >
-                    ← Previous Question
-                  </button>
-                  <button
-                    className="btn btn-primary btn-small"
-                    onClick={() => setReviewIdx(Math.min(reviewQuestions.length - 1, safeIdx + 1))}
-                    disabled={safeIdx === reviewQuestions.length - 1}
-                  >
-                    Next Question →
-                  </button>
+                <div className="question-text">{q.question}</div>
+                <div className="options-list">
+                  {Object.entries(q.options).map(([l, t]) => (
+                    <div key={l} className={`option-item ${l.toUpperCase() === q.answer ? 'correct' : (l.toUpperCase() === ans ? 'incorrect' : '')}`}>
+                      <span className="option-letter">({l.toUpperCase()})</span>
+                      <span className="option-text">{t}</span>
+                    </div>
+                  ))}
                 </div>
+                {q.explanation && <div className="explanation-box"><strong>Explanation</strong>{q.explanation}</div>}
               </div>
             )
           })()}
-
-          {reviewQuestions.length === 0 && (
-            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-              No questions in this filter.
-            </div>
-          )}
         </div>
       )}
 
-      {activeTab === 'difficulty' && (
-        <div className="difficulty-grid fade-in">
-          {['Easy', 'Medium', 'Difficult'].map(d => {
-            const s = difficultyStats[d]
-            const acc = s.correct + s.incorrect > 0 ? ((s.correct / (s.correct + s.incorrect)) * 100).toFixed(0) : '—'
-            return (
-              <div key={d} className="difficulty-card">
-                <h4 style={{
-                  color: d === 'Easy' ? 'var(--success)' : d === 'Difficult' ? 'var(--error)' : 'var(--warning)'
-                }}>
-                  {d}
-                </h4>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '16px' }}>{s.total} questions</p>
-                <div className="difficulty-stats">
-                  <div className="difficulty-stat">
-                    <div className="d-value" style={{ color: 'var(--success)' }}>{s.correct}</div>
-                    <div className="d-label">Correct</div>
-                  </div>
-                  <div className="difficulty-stat">
-                    <div className="d-value" style={{ color: 'var(--error)' }}>{s.incorrect}</div>
-                    <div className="d-label">Wrong</div>
-                  </div>
-                  <div className="difficulty-stat">
-                    <div className="d-value" style={{ color: 'var(--accent)' }}>{acc}%</div>
-                    <div className="d-label">Accuracy</div>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Actions */}
-      <div style={{ display: 'flex', gap: '16px', marginTop: '40px', justifyContent: 'center', flexWrap: 'wrap' }}>
-        <button className="btn btn-secondary" onClick={onHome}>← Back to Home</button>
-        <button className="btn btn-primary" onClick={onRetake}>Retake Exam</button>
+      <div style={{ display: 'flex', gap: '12px', marginTop: '40px', justifyContent: 'center' }}>
+        <button className="btn btn-secondary" onClick={onHome}>Home</button>
+        <button className="btn btn-primary" onClick={onRetake}>Retake</button>
       </div>
     </div>
   )
 }
 
-// ─── Helper: get all saved test results from localStorage ───
-function getSavedResults() {
-  const results = {}
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i)
-    if (key && key.startsWith('upsc_result_')) {
-      try {
-        const data = JSON.parse(localStorage.getItem(key))
-        if (data && data.year) {
-          results[data.year] = data
-        }
-      } catch { /* ignore */ }
-    }
-  }
-  return results
+// ─── Timer Hook ───
+function useTimer(initialSeconds, onExpire) {
+  const [seconds, setSeconds] = useState(initialSeconds)
+  const [isPaused, setIsPaused] = useState(false)
+  const intervalRef = useRef()
+  const onExpireRef = useRef(onExpire)
+
+  useEffect(() => {
+    onExpireRef.current = onExpire
+  }, [onExpire])
+
+  useEffect(() => {
+    if (isPaused) { clearInterval(intervalRef.current); return }
+    intervalRef.current = setInterval(() => {
+      setSeconds(s => { if (s <= 1) { clearInterval(intervalRef.current); onExpireRef.current(); return 0 }; return s - 1 })
+    }, 1000)
+    return () => clearInterval(intervalRef.current)
+  }, [isPaused])
+
+  return { seconds, isPaused, togglePause: () => setIsPaused(!isPaused), formatTime: () => {
+    const h = Math.floor(seconds/3600), m = Math.floor((seconds%3600)/60), s = seconds%60
+    return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`
+  }}
 }
 
 // ─── Main App ───
 function App() {
-  const [screen, setScreen] = useState('home') // home, modal, exam, scorecard
+  const [screen, setScreen] = useState('home')
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light')
   const [yearCounts, setYearCounts] = useState({})
-  const [selectedYear, setSelectedYear] = useState(null)
   const [questions, setQuestions] = useState([])
   const [responses, setResponses] = useState({})
+  const [selectedYear, setSelectedYear] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [savedResults, setSavedResults] = useState({})
 
-  // Load year counts, saved results, and check for active session on mount
   useEffect(() => {
-    fetchAllYearCounts().then(async (counts) => {
-      setYearCounts(counts)
-      setSavedResults(getSavedResults())
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('theme', theme)
+  }, [theme])
 
-      // Check for an active exam session (page was refreshed mid-test)
-      const activeSession = localStorage.getItem('upsc_active_session')
-      if (activeSession) {
-        try {
-          const session = JSON.parse(activeSession)
-          if (session.year && session.screen === 'exam') {
-            // Restore exam state
-            const yearQuestions = await fetchYearQuestions(session.year)
-            setSelectedYear(session.year)
-            setQuestions(yearQuestions)
-            setScreen('exam')
-            setLoading(false)
-            return
-          }
-        } catch { /* ignore invalid session */ }
-      }
-
-      setLoading(false)
-    })
+  useEffect(() => {
+    fetchAllYearCounts().then(counts => { setYearCounts(counts); setLoading(false) })
   }, [])
 
-  const handleSelectYear = (year) => {
-    setSelectedYear(year)
-    setScreen('modal')
+  const handleSelectYear = async (year) => {
+    setLoading(true); setSelectedYear(year)
+    const qs = await fetchYearQuestions(year); setQuestions(qs); setScreen('exam'); setLoading(false)
   }
 
-  const handleStartExam = async () => {
-    setLoading(true)
-    // Fetch questions ONLY for the selected year — strict segregation
-    const yearQuestions = await fetchYearQuestions(selectedYear)
-    setQuestions(yearQuestions)
-    setResponses({})
-    setLoading(false)
-    // Save active session so refresh can resume
-    localStorage.setItem('upsc_active_session', JSON.stringify({ screen: 'exam', year: selectedYear }))
-    setScreen('exam')
-  }
-
-  const handleSubmitExam = (examResponses) => {
-    setResponses(examResponses)
-    // Save completed test result to localStorage
-    const resultData = {
-      year: selectedYear,
-      responses: examResponses,
-      timestamp: new Date().toISOString(),
+  const handleDeepDive = async (cat) => {
+    setLoading(true); setSelectedYear(null)
+    let allQs = []
+    for (const year of Object.keys(YEAR_FILES)) {
+      const qs = await fetchYearQuestions(Number(year))
+      allQs = allQs.concat(qs.filter(q => q.section === cat))
     }
-    localStorage.setItem(`upsc_result_${selectedYear}`, JSON.stringify(resultData))
-    setSavedResults(prev => ({ ...prev, [selectedYear]: resultData }))
+    setQuestions(allQs.sort(() => 0.5 - Math.random()).slice(0, 50))
+    setScreen('exam'); setLoading(false)
+  }
+
+  const handleMistakeBook = () => {
+    const mistakes = JSON.parse(localStorage.getItem('upsc_mistakes') || '[]')
+    if (mistakes.length === 0) { alert('No mistakes recorded yet. Finish a test to populate your mistake book!'); return }
+    setQuestions(mistakes.sort(() => 0.5 - Math.random())); setScreen('exam'); setSelectedYear(null)
+  }
+
+  const handleBookmarks = () => {
+    const bookmarks = JSON.parse(localStorage.getItem('upsc_bookmarks') || '[]')
+    if (bookmarks.length === 0) { alert('Your bookmark list is empty. Save questions during exams or review to see them here!'); return }
+    setQuestions(bookmarks.sort((a, b) => b.year - a.year)); setScreen('exam'); setSelectedYear(null)
+  }
+
+  const handleSubmit = (r) => {
+    setResponses(r)
+    const currentMistakes = JSON.parse(localStorage.getItem('upsc_mistakes') || '[]')
+    const newMistakes = questions.filter((q, idx) => r[idx] && r[idx] !== q.answer)
+    const combined = [...currentMistakes, ...newMistakes].filter((v, i, a) => a.findIndex(t => t.id === v.id) === i)
+    localStorage.setItem('upsc_mistakes', JSON.stringify(combined))
+
+    if (selectedYear) {
+      const score = questions.reduce((acc, q, idx) => {
+        if (r[idx] === q.answer) return acc + MARKS_CORRECT
+        if (r[idx]) return acc + MARKS_INCORRECT
+        return acc
+      }, 0)
+      localStorage.setItem(`upsc_result_${selectedYear}`, JSON.stringify({ score, responses: r, timestamp: new Date() }))
+    }
     setScreen('scorecard')
   }
 
-  const handleRetake = () => {
-    localStorage.removeItem(`upsc_exam_${selectedYear}`)
-    localStorage.removeItem(`upsc_timer_${selectedYear}`)
-    setResponses({})
-    // Save active session so refresh can resume the retake too
-    localStorage.setItem('upsc_active_session', JSON.stringify({ screen: 'exam', year: selectedYear }))
-    setScreen('exam')
-  }
-
-  const handleGoHome = () => {
-    localStorage.removeItem('upsc_active_session')
-    setSelectedYear(null)
-    setQuestions([])
-    setResponses({})
-    setSavedResults(getSavedResults())
-    setScreen('home')
-  }
-
-  // Load a saved result from localStorage
-  const handleViewSavedResult = async (year) => {
-    const saved = savedResults[year]
-    if (!saved) return
-    setLoading(true)
-    setSelectedYear(year)
-    const yearQuestions = await fetchYearQuestions(year)
-    setQuestions(yearQuestions)
-    setResponses(saved.responses)
-    setLoading(false)
-    setScreen('scorecard')
-  }
-
-  if (loading) {
-    return (
-      <>
-        <Header onHome={handleGoHome} />
-        <div className="loading-screen">
-          <div className="loading-spinner"></div>
-          <div className="loading-text">Loading UPSC Questions...</div>
-        </div>
-      </>
-    )
-  }
+  if (loading) return <div className="loading-screen"><div className="loading-spinner"></div><div className="loading-text">Optimizing TestBook...</div></div>
 
   return (
     <>
-      <Header onHome={handleGoHome} />
-
+      <Header 
+        onHome={() => setScreen('home')} 
+        theme={theme} 
+        toggleTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} 
+        onMistakeBook={handleMistakeBook} 
+        onBookmarks={handleBookmarks}
+      />
       {screen === 'home' && (
-        <HomeScreen yearCounts={yearCounts} onSelectYear={handleSelectYear} savedResults={savedResults} onViewResult={handleViewSavedResult} />
-      )}
-
-      {screen === 'modal' && (
-        <>
-          <HomeScreen yearCounts={yearCounts} onSelectYear={handleSelectYear} savedResults={savedResults} onViewResult={handleViewSavedResult} />
-          <PreTestModal
-            year={selectedYear}
-            questionCount={yearCounts[selectedYear] || 0}
-            onStart={handleStartExam}
-            onClose={() => setScreen('home')}
-          />
-        </>
-      )}
-
-      {screen === 'exam' && (
-        <ExamScreen
-          year={selectedYear}
-          questions={questions}
-          onSubmit={handleSubmitExam}
+        <HomeScreen 
+          yearCounts={yearCounts} 
+          onSelectYear={handleSelectYear} 
+          onDeepDive={handleDeepDive}
+          savedResults={Object.keys(YEAR_FILES).reduce((acc, y) => {
+            const res = localStorage.getItem(`upsc_result_${y}`); if (res) acc[y] = JSON.parse(res); return acc
+          }, {})}
+          onViewResult={async (y) => {
+            setLoading(true); setSelectedYear(y); const qs = await fetchYearQuestions(y)
+            setQuestions(qs); setResponses(JSON.parse(localStorage.getItem(`upsc_result_${y}`)).responses); setScreen('scorecard'); setLoading(false)
+          }}
         />
       )}
-
-      {screen === 'scorecard' && (
-        <ScorecardScreen
-          year={selectedYear}
-          questions={questions}
-          responses={responses}
-          onRetake={handleRetake}
-          onHome={handleGoHome}
-        />
-      )}
-
-      {/* Credit Footer */}
-      <footer className="app-footer">
-        <div className="footer-content">
-          <p className="footer-title">Created by <strong>Darshan</strong></p>
-          <div className="footer-links">
-            <a href="https://darshandubey.site" target="_blank" rel="noopener noreferrer" className="footer-link" title="Portfolio">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"></path>
-                <path d="M14 2v4a2 2 0 0 0 2 2h4"></path>
-                <path d="M3 15h6"></path>
-                <path d="M3 18h6"></path>
-              </svg>
-              <span>Portfolio</span>
-            </a>
-            <a href="https://github.com/mailmeatdarshan" target="_blank" rel="noopener noreferrer" className="footer-link" title="GitHub">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"></path>
-                <path d="M9 18c-4.51 2-5-2-7-2"></path>
-              </svg>
-              <span>GitHub</span>
-            </a>
-            <a href="https://www.linkedin.com/in/darshandubey25/" target="_blank" rel="noopener noreferrer" className="footer-link" title="LinkedIn">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"></path>
-                <rect x="2" y="9" width="4" height="12"></rect>
-                <circle cx="4" cy="4" r="2"></circle>
-              </svg>
-              <span>LinkedIn</span>
-            </a>
-          </div>
-        </div>
-      </footer>
+      {screen === 'exam' && <ExamScreen questions={questions} onQuit={() => setScreen('home')} onSubmit={handleSubmit} />}
+      {screen === 'scorecard' && <ScorecardScreen year={selectedYear} questions={questions} responses={responses} onRetake={() => setScreen('exam')} onHome={() => setScreen('home')} />}
+      <footer className="app-footer"><div className="footer-content"><p className="footer-title">TestBook Elite Edition</p></div></footer>
     </>
   )
 }
