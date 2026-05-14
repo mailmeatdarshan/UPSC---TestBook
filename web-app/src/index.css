@@ -1489,3 +1489,11 @@ body {
 }
 .footer-link svg { width: 16px; height: 16px; }
 .footer-link:hover { color: var(--text-primary); }
+
+.cutoff-commentary {
+  margin-top: 16px;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  line-height: 1.5;
+}

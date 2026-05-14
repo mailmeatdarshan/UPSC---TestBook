@@ -3,7 +3,7 @@ import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, 
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend 
 } from 'recharts'
-import { Sun, Moon, Keyboard, BarChart3, Clock, CheckCircle2, XCircle, AlertCircle, ChevronLeft, ChevronRight, BookOpen, Target, GraduationCap, Bookmark, BookmarkCheck } from 'lucide-react'
+import { Sun, Moon, Keyboard, BarChart3, Clock, CheckCircle2, XCircle, AlertCircle, ChevronLeft, ChevronRight, BookOpen, Target, GraduationCap, Bookmark, BookmarkCheck, ExternalLink } from 'lucide-react'
 import './index.css'
 
 // ─── Constants & Data ───
@@ -17,8 +17,9 @@ const YEAR_FILES = {
 }
 
 const HISTORICAL_CUTOFFS = {
-  2024: 94.46, 2023: 75.41, 2022: 88.22, 2021: 87.54, 2020: 92.51,
+  2025: 92.66, 2024: 94.46, 2023: 75.41, 2022: 88.22, 2021: 87.54, 2020: 92.51,
   2019: 98.00, 2018: 98.00, 2017: 105.34, 2016: 116.00, 2015: 107.34,
+  2014: 105.00, 2013: 110.00, 2012: 100.00 // Estimated GS-only cutoffs for 2012-2014
 }
 
 const SECTION_MAP = {
@@ -286,16 +287,32 @@ function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
   const stats = useMemo(() => {
     let correct = 0, incorrect = 0, unattempted = 0, totalMarks = 0
     const sectionStats = {}
+    const difficultyStats = { 'Easy': { total: 0, correct: 0 }, 'Medium': { total: 0, correct: 0 }, 'Difficult': { total: 0, correct: 0 } }
+    
     questions.forEach((q, idx) => {
       if (!sectionStats[q.section]) sectionStats[q.section] = { total: 0, correct: 0, marks: 0 }
       const s = sectionStats[q.section]; s.total++
+      
+      const diff = q.difficulty || 'Medium'
+      if (!difficultyStats[diff]) difficultyStats[diff] = { total: 0, correct: 0 }
+      difficultyStats[diff].total++
+
       const ans = responses[idx]
       if (ans === undefined) unattempted++
-      else if (ans === q.answer) { correct++; s.correct++; totalMarks += MARKS_CORRECT; s.marks += MARKS_CORRECT }
+      else if (ans === q.answer) { 
+        correct++; s.correct++; totalMarks += MARKS_CORRECT; s.marks += MARKS_CORRECT 
+        difficultyStats[diff].correct++
+      }
       else { incorrect++; totalMarks += MARKS_INCORRECT; s.marks += MARKS_INCORRECT }
     })
     const cutoff = HISTORICAL_CUTOFFS[year] || null
-    return { correct, incorrect, unattempted, totalMarks, cutoff, qualified: cutoff ? totalMarks >= cutoff : null, 
+    return { 
+      correct, incorrect, unattempted, totalMarks, cutoff, 
+      qualified: cutoff ? totalMarks >= cutoff : null, 
+      sectionStats: Object.entries(sectionStats).map(([name, s]) => ({ 
+        name, ...s, accuracy: (s.correct / s.total) * 100 
+      })).sort((a, b) => b.accuracy - a.accuracy),
+      difficultyStats,
       radarData: Object.entries(sectionStats).map(([name, s]) => ({ subject: name, score: Math.max(0, (s.marks / (s.total * 2)) * 100) })),
       pieData: [{ name: 'Correct', value: correct, color: '#10b981' }, { name: 'Incorrect', value: incorrect, color: '#ef4444' }, { name: 'Unattempted', value: unattempted, color: '#9ca3af' }]
     }
@@ -319,10 +336,23 @@ function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
       <div className="scorecard-header">
         <h1>Exam Result — {year || 'Special Attempt'}</h1>
         {stats.cutoff && (
-          <div className={`status-badge ${stats.qualified ? 'qualified' : 'failed'}`}>
-            {stats.qualified ? 'QUALIFIED' : 'NOT QUALIFIED'}
-            <small>Cut-off: {stats.cutoff} | Your Score: {stats.totalMarks.toFixed(2)}</small>
-          </div>
+          <>
+            <div className={`status-badge ${stats.qualified ? 'qualified' : 'failed'}`}>
+              {stats.qualified ? 'QUALIFIED' : 'NOT QUALIFIED'}
+              <small>Cut-off: {stats.cutoff} | Your Score: {stats.totalMarks.toFixed(2)}</small>
+            </div>
+            <p className="cutoff-commentary">
+              {stats.qualified ? (
+                stats.totalMarks - stats.cutoff > 20 ? 
+                  `🔥 Excellent performance! You are well above the cutoff by ${(stats.totalMarks - stats.cutoff).toFixed(2)} marks.` :
+                  `🎉 Good job! You cleared the cutoff by ${(stats.totalMarks - stats.cutoff).toFixed(2)} marks.`
+              ) : (
+                stats.cutoff - stats.totalMarks < 10 ?
+                  `✨ So close! You missed the cutoff by only ${(stats.cutoff - stats.totalMarks).toFixed(2)} marks. A little more effort and you'll be there!` :
+                  `📚 You need about ${(stats.cutoff - stats.totalMarks).toFixed(2)} more marks to clear the cutoff. Review your weak subjects in the analytics below.`
+              )}
+            </p>
+          </>
         )}
       </div>
 
@@ -337,33 +367,89 @@ function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
         </div>
       </div>
 
+      <div className="score-stats fade-in">
+        <div className="stat-card">
+          <div className="stat-value text-accent">{questions.length}</div>
+          <div className="stat-label">Total Questions</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value text-success">{stats.correct}</div>
+          <div className="stat-label">Correct</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value text-error">{stats.incorrect}</div>
+          <div className="stat-label">Incorrect</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value text-muted">{stats.unattempted}</div>
+          <div className="stat-label">Unattempted</div>
+        </div>
+      </div>
+
       <div className="tabs">
         <button className={`tab-btn ${activeTab === 'summary' ? 'active' : ''}`} onClick={() => setActiveTab('summary')}>Analytics</button>
         <button className={`tab-btn ${activeTab === 'review' ? 'active' : ''}`} onClick={() => setActiveTab('review')}>Review</button>
       </div>
 
       {activeTab === 'summary' && (
-        <div className="analytics-grid fade-in">
-          <div className="analytics-card">
-            <h3>Subject Strengths</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <RadarChart data={stats.radarData}>
-                <PolarGrid stroke="var(--border)" />
-                <PolarAngleAxis dataKey="subject" tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
-                <Radar dataKey="score" stroke="#10b981" fill="#10b981" fillOpacity={0.4} />
-              </RadarChart>
-            </ResponsiveContainer>
+        <div className="fade-in">
+          <div className="analytics-grid">
+            <div className="analytics-card">
+              <h3>Subject Strengths</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <RadarChart data={stats.radarData}>
+                  <PolarGrid stroke="var(--border)" />
+                  <PolarAngleAxis dataKey="subject" tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                  <Radar dataKey="score" stroke="#10b981" fill="#10b981" fillOpacity={0.4} />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="analytics-card">
+              <h3>Accuracy Breakdown</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie data={stats.pieData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                    {stats.pieData.map((e, i) => <Cell key={i} fill={e.color} />)}
+                  </Pie>
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-          <div className="analytics-card">
-            <h3>Accuracy Breakdown</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie data={stats.pieData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                  {stats.pieData.map((e, i) => <Cell key={i} fill={e.color} />)}
-                </Pie>
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+
+          <div className="analytics-card" style={{ minHeight: 'auto', marginBottom: 'var(--space-lg)' }}>
+            <h3>Subject Wise Performance</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '24px' }}>
+              {stats.sectionStats.map(s => (
+                <div key={s.name} className="section-bar-container">
+                  <div className="section-bar-label">
+                    <span>{s.name}</span>
+                    <span>{s.correct}/{s.total} ({s.accuracy.toFixed(0)}%)</span>
+                  </div>
+                  <div className="section-bar-track">
+                    <div className="section-bar-fill" style={{ width: `${s.accuracy}%` }}></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="difficulty-grid">
+            {Object.entries(stats.difficultyStats).map(([level, d]) => (
+              <div key={level} className="difficulty-card">
+                <h4>{level} Questions</h4>
+                <div className="difficulty-stats">
+                  <div className="difficulty-stat">
+                    <div className="d-value">{d.correct}/{d.total}</div>
+                    <div className="d-label">Accuracy</div>
+                  </div>
+                  <div className="difficulty-stat">
+                    <div className="d-value">{d.total > 0 ? ((d.correct / d.total) * 100).toFixed(0) : 0}%</div>
+                    <div className="d-label">Percentage</div>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -391,6 +477,15 @@ function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
                     </button>
                   </div>
                   <span className="question-section-badge">{q.section}</span>
+                  <a 
+                    href={`https://www.google.com/search?q=${encodeURIComponent(q.question)}`} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="google-search-link"
+                  >
+                    <ExternalLink size={12} style={{ marginRight: '4px' }} />
+                    Search on Google
+                  </a>
                 </div>
                 <div className="question-text">{q.question}</div>
                 <div className="options-list">
