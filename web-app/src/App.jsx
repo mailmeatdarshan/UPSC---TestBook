@@ -157,33 +157,56 @@ function LaserPointer({ active }) {
   const canvasRef = useRef(null)
   const pointsRef = useRef([])
   const requestRef = useRef()
+  const isDrawing = useRef(false)
+  const startPos = useRef({ x: 0, y: 0 })
+  const startTime = useRef(0)
 
-  useEffect(() => {
+  const handlePointerDown = (e) => {
     if (!active) return
+    isDrawing.current = true
+    startPos.current = { x: e.clientX, y: e.clientY }
+    startTime.current = performance.now()
     
-    const handleMove = (e) => {
-      if (e.buttons !== 1 && e.pointerType === 'mouse') return
-      const canvas = canvasRef.current
-      if (!canvas) return
-      const rect = canvas.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const y = e.clientY - rect.top
-      
-      // Only record if within canvas bounds
-      if (x >= 0 && x <= rect.width && y >= 0 && y <= rect.height) {
-        pointsRef.current.push({ x, y, time: performance.now() })
-      }
-    }
+    const rect = canvasRef.current.getBoundingClientRect()
+    pointsRef.current.push({ 
+      x: e.clientX - rect.left, 
+      y: e.clientY - rect.top, 
+      time: performance.now() 
+    })
+  }
 
-    window.addEventListener('pointermove', handleMove)
-    return () => window.removeEventListener('pointermove', handleMove)
-  }, [active])
+  const handlePointerMove = (e) => {
+    if (!active || !isDrawing.current) return
+    const rect = canvasRef.current.getBoundingClientRect()
+    pointsRef.current.push({ 
+      x: e.clientX - rect.left, 
+      y: e.clientY - rect.top, 
+      time: performance.now() 
+    })
+  }
+
+  const handlePointerUp = (e) => {
+    if (!isDrawing.current) return
+    isDrawing.current = false
+
+    // Click passthrough logic
+    const duration = performance.now() - startTime.current
+    const dist = Math.hypot(e.clientX - startPos.current.x, e.clientY - startPos.current.y)
+    
+    if (duration < 200 && dist < 10) {
+      // It's a click/tap, passthrough
+      canvasRef.current.style.pointerEvents = 'none'
+      const el = document.elementFromPoint(e.clientX, e.clientY)
+      if (el) el.click()
+      canvasRef.current.style.pointerEvents = 'auto'
+    }
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
-    const trailDuration = 800 // ms
+    const trailDuration = 800
 
     const animate = (time) => {
       ctx.clearRect(0, 0, canvas.width, canvas.height)
@@ -235,13 +258,16 @@ function LaserPointer({ active }) {
   return (
     <canvas 
       ref={canvasRef}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
       style={{
         position: 'absolute',
         top: 0,
         left: 0,
         width: '100%',
         height: '100%',
-        pointerEvents: 'none',
+        pointerEvents: active ? 'auto' : 'none',
         zIndex: 5,
         touchAction: 'none'
       }}
