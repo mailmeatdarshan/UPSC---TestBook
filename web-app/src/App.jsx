@@ -152,6 +152,98 @@ function HomeScreen({ yearCounts, onSelectYear, savedResults, onViewResult, onDe
   )
 }
 
+// ─── Laser Pointer Hook ───
+function LaserPointer({ active }) {
+  const canvasRef = useRef(null)
+  const [points, setPoints] = useState([])
+  const requestRef = useRef()
+
+  const handlePointerMove = (e) => {
+    if (!active || (e.buttons !== 1 && e.pointerType === 'mouse')) return
+    const rect = canvasRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    setPoints(prev => [...prev, { x, y, time: Date.now() }])
+  }
+
+  const animate = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    const now = Date.now()
+    const trailDuration = 800 // ms
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    
+    // Filter out old points
+    const validPoints = points.filter(p => now - p.time < trailDuration)
+    if (validPoints.length !== points.length) setPoints(validPoints)
+
+    if (validPoints.length > 1) {
+      ctx.beginPath()
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      
+      for (let i = 1; i < validPoints.length; i++) {
+        const p1 = validPoints[i - 1]
+        const p2 = validPoints[i]
+        
+        // Skip lines between segments (if time gap is too large)
+        if (p2.time - p1.time > 50) continue 
+
+        const age = now - p2.time
+        const opacity = 1 - (age / trailDuration)
+        
+        ctx.strokeStyle = `rgba(239, 68, 68, ${opacity * 0.6})` // Red laser
+        ctx.lineWidth = 4
+        
+        ctx.beginPath()
+        ctx.moveTo(p1.x, p1.y)
+        ctx.lineTo(p2.x, p2.y)
+        ctx.stroke()
+      }
+    }
+    
+    requestRef.current = requestAnimationFrame(animate)
+  }
+
+  useEffect(() => {
+    requestRef.current = requestAnimationFrame(animate)
+    return () => cancelAnimationFrame(requestRef.current)
+  }, [points])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const resize = () => {
+      const rect = canvas.parentElement.getBoundingClientRect()
+      canvas.width = rect.width
+      canvas.height = rect.height
+    }
+    resize()
+    window.addEventListener('resize', resize)
+    return () => window.removeEventListener('resize', resize)
+  }, [])
+
+  return (
+    <canvas 
+      ref={canvasRef}
+      className={`laser-canvas ${active ? 'active' : ''}`}
+      onPointerMove={handlePointerMove}
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: active ? 'auto' : 'none',
+        zIndex: 5,
+        touchAction: 'none'
+      }}
+    />
+  )
+}
+
 function ExamScreen({ questions, onSubmit, onQuit, duration = EXAM_DURATION }) {
   const [currentIdx, setCurrentIdx] = useState(0)
   const [responses, setResponses] = useState({})
@@ -160,6 +252,35 @@ function ExamScreen({ questions, onSubmit, onQuit, duration = EXAM_DURATION }) {
   const [showConfirm, setShowConfirm] = useState(false)
   const [showQuitConfirm, setShowQuitConfirm] = useState(false)
   const [bookmarkedIds, setBookmarkedIds] = useState(() => new Set(JSON.parse(localStorage.getItem('upsc_bookmarks') || '[]').map(q => q.id)))
+  const [laserActive, setLaserActive] = useState(false)
+  
+  const [touchStart, setTouchStart] = useState({ x: null, y: null })
+  const [touchEnd, setTouchEnd] = useState({ x: null, y: null })
+  const [slideDir, setSlideDir] = useState('up')
+
+  const handleTouchStart = (e) => {
+    setTouchEnd({ x: null, y: null })
+    setTouchStart({ x: e.targetTouches[0].clientX, y: e.targetTouches[0].clientY })
+  }
+  const handleTouchMove = (e) => setTouchEnd({ x: e.targetTouches[0].clientX, y: e.targetTouches[0].clientY })
+  const handleTouchEnd = () => {
+    if (!touchStart.x || !touchEnd.x) return
+    const distanceX = touchStart.x - touchEnd.x
+    const distanceY = touchStart.y - touchEnd.y
+    const isLeftSwipe = distanceX > 50
+    const isRightSwipe = distanceX < -50
+    
+    if (Math.abs(distanceX) > Math.abs(distanceY)) {
+      if (isLeftSwipe && currentIdx < questions.length - 1) {
+        setSlideDir('left')
+        goNext()
+      }
+      if (isRightSwipe && currentIdx > 0) {
+        setSlideDir('right')
+        goPrev()
+      }
+    }
+  }
 
   const handleExpire = useCallback(() => onSubmit(responses), [responses, onSubmit])
   const { formatTime, isPaused, togglePause } = useTimer(duration, handleExpire)
@@ -195,6 +316,7 @@ function ExamScreen({ questions, onSubmit, onQuit, duration = EXAM_DURATION }) {
       else if (['A', 'B', 'C', 'D'].includes(key)) selectOption(key)
       else if (key === 'M') toggleMark()
       else if (key === 'B') toggleBookmark()
+      else if (key === 'L') setLaserActive(prev => !prev)
     }
     window.addEventListener('keydown', handleKeyDown); return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isPaused, showConfirm, showQuitConfirm, goPrev, goNext, selectOption, toggleMark, toggleBookmark])
@@ -213,12 +335,27 @@ function ExamScreen({ questions, onSubmit, onQuit, duration = EXAM_DURATION }) {
           </div>
         </div>
       )}
-      <div className="exam-main">
+        <div 
+        key={currentIdx}
+        className={`exam-main slide-${slideDir}`}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        style={{ position: 'relative' }}
+      >
+        <LaserPointer active={laserActive} />
         <div className="question-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span className="question-number">Question {currentIdx + 1} of {questions.length}</span>
             <button className={`bookmark-btn ${bookmarkedIds.has(currentQ.id) ? 'active' : ''}`} onClick={toggleBookmark} title="Bookmark (B)">
               {bookmarkedIds.has(currentQ.id) ? <BookmarkCheck size={20} /> : <Bookmark size={20} />}
+            </button>
+            <button 
+              className={`laser-toggle-btn ${laserActive ? 'active' : ''}`} 
+              onClick={() => setLaserActive(!laserActive)}
+              title="Laser Pointer (L)"
+            >
+              <Zap size={16} /> Laser
             </button>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
@@ -239,8 +376,8 @@ function ExamScreen({ questions, onSubmit, onQuit, duration = EXAM_DURATION }) {
         <div className="question-actions">
           <button className="btn btn-secondary btn-small" onClick={() => selectOption(undefined)}>Clear</button>
           <button className="btn btn-secondary btn-small" onClick={toggleMark}>{marked.has(currentIdx) ? 'Unmark' : 'Mark Review'}</button>
-          <button className="btn btn-secondary btn-small" onClick={goPrev} disabled={currentIdx === 0}><ChevronLeft size={16} /> Prev</button>
-          <button className="btn btn-primary btn-small" onClick={goNext} disabled={currentIdx === questions.length - 1}>Next <ChevronRight size={16} /></button>
+          <button className="btn btn-secondary btn-small" onClick={() => { setSlideDir('right'); goPrev() }} disabled={currentIdx === 0}><ChevronLeft size={16} /> Prev</button>
+          <button className="btn btn-primary btn-small" onClick={() => { setSlideDir('left'); goNext() }} disabled={currentIdx === questions.length - 1}>Next <ChevronRight size={16} /></button>
         </div>
       </div>
       <div className="exam-sidebar">
@@ -251,8 +388,8 @@ function ExamScreen({ questions, onSubmit, onQuit, duration = EXAM_DURATION }) {
         <div className="palette-container">
           <div className="palette-grid">
             {questions.map((_, idx) => {
-              const status = responses[idx] ? (marked.has(idx) ? 'answered marked' : 'answered') : (marked.has(idx) ? 'marked' : (visited.has(idx) ? 'not-answered' : ''))
-              return <button key={idx} className={`palette-btn ${status} ${idx === currentIdx ? 'current' : ''}`} onClick={() => goToQuestion(idx)}>{idx + 1}</button>
+              const status = responses[idx] !== undefined ? 'answered' : (marked.has(idx) ? 'marked' : (visited.has(idx) ? 'visited' : ''))
+              return <button key={idx} className={`palette-btn ${status} ${idx === currentIdx ? 'current' : ''}`} onClick={() => { setSlideDir('up'); goToQuestion(idx) }}>{idx + 1}</button>
             })}
           </div>
         </div>
@@ -283,6 +420,34 @@ function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
   const [activeTab, setActiveTab] = useState('summary')
   const [reviewIdx, setReviewIdx] = useState(0)
   const [bookmarkedIds, setBookmarkedIds] = useState(() => new Set(JSON.parse(localStorage.getItem('upsc_bookmarks') || '[]').map(q => q.id)))
+  
+  const [touchStart, setTouchStart] = useState({ x: null, y: null })
+  const [touchEnd, setTouchEnd] = useState({ x: null, y: null })
+  const [slideDir, setSlideDir] = useState('up')
+
+  const handleTouchStart = (e) => {
+    setTouchEnd({ x: null, y: null })
+    setTouchStart({ x: e.targetTouches[0].clientX, y: e.targetTouches[0].clientY })
+  }
+  const handleTouchMove = (e) => setTouchEnd({ x: e.targetTouches[0].clientX, y: e.targetTouches[0].clientY })
+  const handleTouchEnd = () => {
+    if (!touchStart.x || !touchEnd.x) return
+    const distanceX = touchStart.x - touchEnd.x
+    const distanceY = touchStart.y - touchEnd.y
+    const isLeftSwipe = distanceX > 50
+    const isRightSwipe = distanceX < -50
+    
+    if (Math.abs(distanceX) > Math.abs(distanceY)) {
+      if (isLeftSwipe && reviewIdx < questions.length - 1) {
+        setSlideDir('left')
+        setReviewIdx(prev => prev + 1)
+      }
+      if (isRightSwipe && reviewIdx > 0) {
+        setSlideDir('right')
+        setReviewIdx(prev => prev - 1)
+      }
+    }
+  }
 
   const stats = useMemo(() => {
     let correct = 0, incorrect = 0, unattempted = 0, totalMarks = 0
@@ -459,13 +624,19 @@ function ScorecardScreen({ year, questions, responses, onRetake, onHome }) {
           <div className="review-palette"><div className="review-palette-grid">
             {questions.map((q, i) => {
               const status = responses[i] === undefined ? 'unattempted' : (responses[i] === q.answer ? 'correct' : 'incorrect')
-              return <button key={i} className={`review-palette-btn ${status} ${i === reviewIdx ? 'current' : ''}`} onClick={() => setReviewIdx(i)}>{i + 1}</button>
+              return <button key={i} className={`review-palette-btn ${status} ${i === reviewIdx ? 'current' : ''}`} onClick={() => { setSlideDir('up'); setReviewIdx(i) }}>{i + 1}</button>
             })}
           </div></div>
           {(() => {
             const q = questions[reviewIdx], ans = responses[reviewIdx]
             return (
-              <div className="review-question slide-up">
+              <div 
+                key={reviewIdx}
+                className={`review-question slide-${slideDir}`}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+              >
                 <div className="review-question-header">
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <span className={`review-status-icon ${ans === q.answer ? 'correct' : (ans === undefined ? 'unattempted' : 'incorrect')}`}>
