@@ -3,7 +3,7 @@ import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, 
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend 
 } from 'recharts'
-import { Sun, Moon, Keyboard, BarChart3, Clock, CheckCircle2, XCircle, AlertCircle, ChevronLeft, ChevronRight, BookOpen, Target, GraduationCap, Bookmark, BookmarkCheck, ExternalLink } from 'lucide-react'
+import { Sun, Moon, Keyboard, BarChart3, Clock, CheckCircle2, XCircle, AlertCircle, ChevronLeft, ChevronRight, BookOpen, Target, GraduationCap, Bookmark, BookmarkCheck, ExternalLink, Zap } from 'lucide-react'
 import './index.css'
 
 // ─── Constants & Data ───
@@ -152,10 +152,10 @@ function HomeScreen({ yearCounts, onSelectYear, savedResults, onViewResult, onDe
   )
 }
 
-// ─── Laser Pointer Hook ───
+// ─── Laser Pointer Component ───
 function LaserPointer({ active }) {
   const canvasRef = useRef(null)
-  const [points, setPoints] = useState([])
+  const pointsRef = useRef([])
   const requestRef = useRef()
 
   const handlePointerMove = (e) => {
@@ -163,54 +163,55 @@ function LaserPointer({ active }) {
     const rect = canvasRef.current.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
-    setPoints(prev => [...prev, { x, y, time: Date.now() }])
-  }
-
-  const animate = () => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    const now = Date.now()
-    const trailDuration = 800 // ms
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    
-    // Filter out old points
-    const validPoints = points.filter(p => now - p.time < trailDuration)
-    if (validPoints.length !== points.length) setPoints(validPoints)
-
-    if (validPoints.length > 1) {
-      ctx.beginPath()
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-      
-      for (let i = 1; i < validPoints.length; i++) {
-        const p1 = validPoints[i - 1]
-        const p2 = validPoints[i]
-        
-        // Skip lines between segments (if time gap is too large)
-        if (p2.time - p1.time > 50) continue 
-
-        const age = now - p2.time
-        const opacity = 1 - (age / trailDuration)
-        
-        ctx.strokeStyle = `rgba(239, 68, 68, ${opacity * 0.6})` // Red laser
-        ctx.lineWidth = 4
-        
-        ctx.beginPath()
-        ctx.moveTo(p1.x, p1.y)
-        ctx.lineTo(p2.x, p2.y)
-        ctx.stroke()
-      }
-    }
-    
-    requestRef.current = requestAnimationFrame(animate)
+    pointsRef.current.push({ x, y, time: performance.now() })
   }
 
   useEffect(() => {
-    requestRef.current = requestAnimationFrame(animate)
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    const trailDuration = 800 // ms
+
+    const animate = (time) => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      
+      // Filter out old points
+      pointsRef.current = pointsRef.current.filter(p => time - p.time < trailDuration)
+
+      if (pointsRef.current.length > 1) {
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        
+        for (let i = 1; i < pointsRef.current.length; i++) {
+          const p1 = pointsRef.current[i - 1]
+          const p2 = pointsRef.current[i]
+          
+          if (p2.time - p1.time > 50) continue 
+
+          const age = time - p2.time
+          const opacity = Math.max(0, 1 - (age / trailDuration))
+          
+          ctx.strokeStyle = `rgba(239, 68, 68, ${opacity * 0.6})`
+          ctx.lineWidth = 4
+          
+          ctx.beginPath()
+          ctx.moveTo(p1.x, p1.y)
+          ctx.lineTo(p2.x, p2.y)
+          ctx.stroke()
+        }
+      }
+      requestRef.current = requestAnimationFrame(animate)
+    }
+
+    if (active) {
+      requestRef.current = requestAnimationFrame(animate)
+    } else {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      pointsRef.current = []
+    }
+
     return () => cancelAnimationFrame(requestRef.current)
-  }, [points])
+  }, [active])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -228,7 +229,6 @@ function LaserPointer({ active }) {
   return (
     <canvas 
       ref={canvasRef}
-      className={`laser-canvas ${active ? 'active' : ''}`}
       onPointerMove={handlePointerMove}
       style={{
         position: 'absolute',
@@ -335,7 +335,7 @@ function ExamScreen({ questions, onSubmit, onQuit, duration = EXAM_DURATION }) {
           </div>
         </div>
       )}
-        <div 
+      <div 
         key={currentIdx}
         className={`exam-main slide-${slideDir}`}
         onTouchStart={handleTouchStart}
