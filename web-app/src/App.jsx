@@ -158,13 +158,26 @@ function LaserPointer({ active }) {
   const pointsRef = useRef([])
   const requestRef = useRef()
 
-  const handlePointerMove = (e) => {
-    if (!active || (e.buttons !== 1 && e.pointerType === 'mouse')) return
-    const rect = canvasRef.current.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    pointsRef.current.push({ x, y, time: performance.now() })
-  }
+  useEffect(() => {
+    if (!active) return
+    
+    const handleMove = (e) => {
+      if (e.buttons !== 1 && e.pointerType === 'mouse') return
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const rect = canvas.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      
+      // Only record if within canvas bounds
+      if (x >= 0 && x <= rect.width && y >= 0 && y <= rect.height) {
+        pointsRef.current.push({ x, y, time: performance.now() })
+      }
+    }
+
+    window.addEventListener('pointermove', handleMove)
+    return () => window.removeEventListener('pointermove', handleMove)
+  }, [active])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -174,26 +187,19 @@ function LaserPointer({ active }) {
 
     const animate = (time) => {
       ctx.clearRect(0, 0, canvas.width, canvas.height)
-      
-      // Filter out old points
       pointsRef.current = pointsRef.current.filter(p => time - p.time < trailDuration)
 
       if (pointsRef.current.length > 1) {
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
-        
         for (let i = 1; i < pointsRef.current.length; i++) {
           const p1 = pointsRef.current[i - 1]
           const p2 = pointsRef.current[i]
-          
           if (p2.time - p1.time > 50) continue 
-
           const age = time - p2.time
           const opacity = Math.max(0, 1 - (age / trailDuration))
-          
           ctx.strokeStyle = `rgba(239, 68, 68, ${opacity * 0.6})`
           ctx.lineWidth = 4
-          
           ctx.beginPath()
           ctx.moveTo(p1.x, p1.y)
           ctx.lineTo(p2.x, p2.y)
@@ -229,14 +235,13 @@ function LaserPointer({ active }) {
   return (
     <canvas 
       ref={canvasRef}
-      onPointerMove={handlePointerMove}
       style={{
         position: 'absolute',
         top: 0,
         left: 0,
         width: '100%',
         height: '100%',
-        pointerEvents: active ? 'auto' : 'none',
+        pointerEvents: 'none',
         zIndex: 5,
         touchAction: 'none'
       }}
