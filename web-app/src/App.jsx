@@ -177,6 +177,10 @@ function LaserPointer({ active }) {
 
   const handlePointerMove = (e) => {
     if (!active || !isDrawing.current) return
+    
+    // Stop event from bubbling up to the swipe handler
+    e.stopPropagation()
+
     const rect = canvasRef.current.getBoundingClientRect()
     pointsRef.current.push({ 
       x: e.clientX - rect.left, 
@@ -261,6 +265,10 @@ function LaserPointer({ active }) {
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      onTouchMove={(e) => e.stopPropagation()}
+      onTouchEnd={(e) => e.stopPropagation()}
       style={{
         position: 'absolute',
         top: 0,
